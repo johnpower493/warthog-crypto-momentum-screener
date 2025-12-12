@@ -84,6 +84,30 @@ async def debug_snapshot_bybit():
     except Exception:
         return {"exchange": "bybit", "ts": 0, "metrics": []}
 
+@app.get("/debug/oi")
+async def debug_oi():
+    """Debug endpoint to check Open Interest data"""
+    try:
+        snap = stream_mgr.agg.build_snapshot()  # type: ignore[attr-defined]
+        oi_metrics = []
+        for m in snap.metrics:
+            if m.open_interest is not None and m.open_interest > 0:
+                oi_metrics.append({
+                    "symbol": m.symbol,
+                    "oi": m.open_interest,
+                    "oi_5m": m.oi_change_5m,
+                    "oi_15m": m.oi_change_15m,
+                    "oi_1h": m.oi_change_1h,
+                })
+        return {
+            "exchange": "binance",
+            "total_symbols": len(snap.metrics),
+            "symbols_with_oi": len(oi_metrics),
+            "oi_data": oi_metrics[:10]  # Show first 10
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/debug/snapshot/all")
 async def debug_snapshot_all():
     try:

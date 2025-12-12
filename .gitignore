@@ -21,6 +21,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+*.exe
 
 # Virtual environments
 venv/
@@ -218,6 +219,3 @@ temp/
 .Trashes
 ehthumbs.db
 Thumbs.db
-
-
-*.exe

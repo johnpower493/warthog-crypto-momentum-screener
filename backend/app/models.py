@@ -36,6 +36,18 @@ class SymbolMetrics(BaseModel):
     breakout_15m: Optional[float] = None  # close/max(high 15m) - 1
     breakdown_15m: Optional[float] = None  # close/min(low 15m) - 1
     vwap_15m: Optional[float] = None
+    # Open Interest
+    open_interest: Optional[float] = None  # current open interest
+    oi_change_5m: Optional[float] = None  # OI % change over 5m
+    oi_change_15m: Optional[float] = None  # OI % change over 15m
+    oi_change_1h: Optional[float] = None  # OI % change over 1h
+    # Momentum indicators
+    momentum_5m: Optional[float] = None  # rate of change 5m
+    momentum_15m: Optional[float] = None  # rate of change 15m
+    momentum_score: Optional[float] = None  # composite momentum score (-100 to +100)
+    # Combined signal
+    signal_score: Optional[float] = None  # combined signal strength (-100 to +100)
+    signal_strength: Optional[str] = None  # "strong_bull", "bull", "neutral", "bear", "strong_bear"
     ts: int = Field(default_factory=lambda: int(datetime.utcnow().timestamp()*1000))
 
 class ScreenerSnapshot(BaseModel):

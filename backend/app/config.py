@@ -25,8 +25,8 @@ BINANCE_FUTURES_WS = os.getenv("BINANCE_FUTURES_WS", "wss://fstream.binance.com/
 WS_PING_INTERVAL = float(os.getenv("WS_PING_INTERVAL", "15"))
 
 # Emission cadence
-SNAPSHOT_INTERVAL_MS = int(os.getenv("SNAPSHOT_INTERVAL_MS", "5000"))  # throttle aggregator emits
-WS_HEARTBEAT_SEC = float(os.getenv("WS_HEARTBEAT_SEC", "5"))  # periodic WS snapshot sender
+SNAPSHOT_INTERVAL_MS = int(os.getenv("SNAPSHOT_INTERVAL_MS", "30000"))  # throttle aggregator emits (30 seconds)
+WS_HEARTBEAT_SEC = float(os.getenv("WS_HEARTBEAT_SEC", "30"))  # periodic WS snapshot sender (30 seconds)
 # Bybit endpoints (public)
 BYBIT_REST = os.getenv("BYBIT_REST", "https://api.bybit.com")
 BYBIT_WS_LINEAR = os.getenv("BYBIT_WS_LINEAR", "wss://stream.bybit.com/v5/public/linear")

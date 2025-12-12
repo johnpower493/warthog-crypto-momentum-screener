@@ -12,6 +12,7 @@ import httpx
 from ..config import BINANCE_FUTURES_REST
 
 from .watchdog import StreamWatchdog
+from .open_interest import OpenInterestFetcher
 
 class StreamManager:
     def __init__(self):
@@ -21,10 +22,13 @@ class StreamManager:
         self._client = httpx.AsyncClient(timeout=20)  # for backfill
         self.agg = Aggregator(exchange="binance")
         self.agg_bybit = Aggregator(exchange="bybit")
+        self.oi_fetcher = OpenInterestFetcher()
         self._task: Optional[asyncio.Task] = None
         self._task_bybit: Optional[asyncio.Task] = None
         self._task_bin_ticker: Optional[asyncio.Task] = None
         self._task_bybit_ticker: Optional[asyncio.Task] = None
+        self._task_bin_oi: Optional[asyncio.Task] = None
+        self._task_bybit_oi: Optional[asyncio.Task] = None
 
     async def start(self):
         if not self._task or self._task.done():
@@ -38,15 +42,50 @@ class StreamManager:
         # seed history for metrics
         try:
             await self._backfill_binance()
-            # emit a snapshot after backfill so UI sees full metrics immediately
-            await self.agg.heartbeat_emit()
         except Exception:
             pass
         try:
             await self._backfill_bybit()
-            await self.agg_bybit.heartbeat_emit()
         except Exception:
             pass
+        
+        # Start OI fetchers and fetch initial OI data
+        await self.oi_fetcher.start()
+        syms_bin = await self.binance.symbols()
+        syms_bybit = await self.bybit.symbols()
+        
+        # Fetch initial OI data before emitting first snapshot
+        try:
+            import logging
+            logging.getLogger(__name__).info("Fetching initial OI data for Binance...")
+            oi_data_bin = await self.oi_fetcher.fetch_binance_oi(syms_bin)
+            for symbol, oi_value in oi_data_bin.items():
+                await self.agg.update_open_interest(symbol, oi_value)
+            logging.getLogger(__name__).info(f"Loaded OI for {len(oi_data_bin)} Binance symbols")
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to fetch initial Binance OI: {e}")
+        
+        try:
+            import logging
+            logging.getLogger(__name__).info("Fetching initial OI data for Bybit...")
+            oi_data_bybit = await self.oi_fetcher.fetch_bybit_oi(syms_bybit)
+            for symbol, oi_value in oi_data_bybit.items():
+                await self.agg_bybit.update_open_interest(symbol, oi_value)
+            logging.getLogger(__name__).info(f"Loaded OI for {len(oi_data_bybit)} Bybit symbols")
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to fetch initial Bybit OI: {e}")
+        
+        # Emit initial snapshots with OI data
+        await self.agg.heartbeat_emit()
+        await self.agg_bybit.heartbeat_emit()
+        
+        # Start periodic OI fetching tasks
+        if not self._task_bin_oi or self._task_bin_oi.done():
+            self._task_bin_oi = asyncio.create_task(self._run_binance_oi(syms_bin))
+        if not self._task_bybit_oi or self._task_bybit_oi.done():
+            self._task_bybit_oi = asyncio.create_task(self._run_bybit_oi(syms_bybit))
         # start watchdogs
         self._wd_bin = StreamWatchdog(
             name="binance",
@@ -153,6 +192,30 @@ class StreamManager:
     async def _run_bybit(self):
         async for k in self.bybit.stream_1m_klines():
             await self.agg_bybit.ingest(k)
+    
+    async def _run_binance_oi(self, symbols: list[str]):
+        """Periodically fetch and update OI data for Binance"""
+        while True:
+            try:
+                oi_data = await self.oi_fetcher.fetch_binance_oi(symbols)
+                for symbol, oi_value in oi_data.items():
+                    await self.agg.update_open_interest(symbol, oi_value)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).debug(f"Binance OI fetch error: {e}")
+            await asyncio.sleep(60)  # Fetch every 60 seconds
+    
+    async def _run_bybit_oi(self, symbols: list[str]):
+        """Periodically fetch and update OI data for Bybit"""
+        while True:
+            try:
+                oi_data = await self.oi_fetcher.fetch_bybit_oi(symbols)
+                for symbol, oi_value in oi_data.items():
+                    await self.agg_bybit.update_open_interest(symbol, oi_value)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).debug(f"Bybit OI fetch error: {e}")
+            await asyncio.sleep(60)  # Fetch every 60 seconds
 
     async def subscribe(self):
         return await self.agg.subscribe()

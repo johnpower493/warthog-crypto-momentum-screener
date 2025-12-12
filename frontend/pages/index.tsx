@@ -4,10 +4,31 @@ type Metric = {
   symbol: string;
   exchange: string;
   last_price: number;
+  change_1m?: number | null;
   change_5m?: number | null;
   change_15m?: number | null;
+  change_60m?: number | null;
   atr?: number | null;
   vol_zscore_1m?: number | null;
+  vol_1m?: number | null;
+  vol_5m?: number | null;
+  vol_15m?: number | null;
+  rvol_1m?: number | null;
+  breakout_15m?: number | null;
+  breakdown_15m?: number | null;
+  vwap_15m?: number | null;
+  // Open Interest
+  open_interest?: number | null;
+  oi_change_5m?: number | null;
+  oi_change_15m?: number | null;
+  oi_change_1h?: number | null;
+  // Momentum
+  momentum_5m?: number | null;
+  momentum_15m?: number | null;
+  momentum_score?: number | null;
+  // Combined signal
+  signal_score?: number | null;
+  signal_strength?: string | null;
   ts: number;
 };
 
@@ -17,7 +38,7 @@ type Snapshot = {
   metrics: Metric[];
 };
 
-type SortKey = 'change_5m' | 'change_15m' | 'atr' | 'vol_zscore_1m' | 'last_price' | 'symbol';
+type SortKey = 'change_5m' | 'change_15m' | 'atr' | 'vol_zscore_1m' | 'last_price' | 'symbol' | 'momentum_score' | 'oi_change_5m' | 'open_interest' | 'signal_score';
 
 export default function Home() {
   const [rows, setRows] = useState<Metric[]>([]);
@@ -25,7 +46,7 @@ export default function Home() {
   const httpState = useRef<Map<string, Metric>>(new Map());
   const [modal, setModal] = useState<{open: boolean; symbol?: string; exchange?: string; closes?: number[]}>({open:false});
   const [query, setQuery] = useState('');
-  const [sortKey, setSortKey] = useState<SortKey>('change_5m');
+  const [sortKey, setSortKey] = useState<SortKey>('signal_score');
   const [sortDir, setSortDir] = useState<'desc'|'asc'>('desc');
   const [onlyFavs, setOnlyFavs] = useState(false);
   const [favs, setFavs] = useState<string[]>(() => {
@@ -133,6 +154,18 @@ export default function Home() {
 
   const favRows = useMemo(() => rows.filter(r => favs.includes(idOf(r))), [rows, favs]);
 
+  const openDetails = async (r: Metric) => {
+    const exchange = r.exchange || 'binance';
+    const backendBase = (process.env.NEXT_PUBLIC_BACKEND_HTTP || 'http://127.0.0.1:8000');
+    try{
+      const resp = await fetch(`${backendBase}/debug/history?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&limit=60`);
+      const j = await resp.json();
+      setModal({open:true, symbol:r.symbol, exchange, closes:j.closes||[]});
+    }catch(e){
+      setModal({open:true, symbol:r.symbol, exchange, closes:[]});
+    }
+  };
+
   return (
     <div className="container">
       <div className="panel">
@@ -144,8 +177,12 @@ export default function Home() {
           <div className="group">
             <input className="input" placeholder="Search symbol (e.g. BTC)" value={query} onChange={e=>setQuery(e.target.value)} />
             <select className="select" value={sortKey} onChange={e=>setSortKey(e.target.value as SortKey)}>
+              <option value="signal_score">Sort: Signal 🔥</option>
               <option value="change_5m">Sort: 5m %</option>
               <option value="change_15m">Sort: 15m %</option>
+              <option value="momentum_score">Sort: Momentum</option>
+              <option value="oi_change_5m">Sort: OI Chg 5m</option>
+              <option value="open_interest">Sort: OI</option>
               <option value="atr">Sort: ATR</option>
               <option value="vol_zscore_1m">Sort: Vol Z</option>
               <option value="last_price">Sort: Last</option>
@@ -257,11 +294,19 @@ export default function Home() {
                 <th></th>
                 <th>Symbol</th>
                 <th>Exchange</th>
+                <th>Signal</th>
                 <th>Last</th>
                 <th>1m %</th>
                 <th>5m %</th>
                 <th>15m %</th>
                 <th>60m %</th>
+                <th>Momentum</th>
+                <th>Mom 5m</th>
+                <th>Mom 15m</th>
+                <th>OI</th>
+                <th>OI Δ 5m</th>
+                <th>OI Δ 15m</th>
+                <th>OI Δ 1h</th>
                 <th>ATR</th>
                 <th>Vol Z</th>
                 <th>Vol 1m</th>
@@ -278,11 +323,19 @@ export default function Home() {
                   </td>
                   <td style={{fontWeight:600}}>{r.symbol}</td>
                   <td className="muted">{r.exchange || 'binance'}</td>
+                  <td className={signalClass(r.signal_strength)}>{fmtSignal(r.signal_score, r.signal_strength)}</td>
                   <td>{fmt(r.last_price)}</td>
                   <td className={pctClass(r.change_1m)}>{fmtPct(r.change_1m)}</td>
                   <td className={pctClass(r.change_5m)}>{fmtPct(r.change_5m)}</td>
                   <td className={pctClass(r.change_15m)}>{fmtPct(r.change_15m)}</td>
                   <td className={pctClass(r.change_60m)}>{fmtPct(r.change_60m)}</td>
+                  <td className={momentumClass(r.momentum_score)}>{fmtMomentum(r.momentum_score)}</td>
+                  <td className={pctClass(r.momentum_5m)}>{fmtPct(r.momentum_5m)}</td>
+                  <td className={pctClass(r.momentum_15m)}>{fmtPct(r.momentum_15m)}</td>
+                  <td>{fmtOI(r.open_interest)}</td>
+                  <td className={oiClass(r.oi_change_5m)}>{fmtOIPct(r.oi_change_5m)}</td>
+                  <td className={oiClass(r.oi_change_15m)}>{fmtOIPct(r.oi_change_15m)}</td>
+                  <td className={oiClass(r.oi_change_1h)}>{fmtOIPct(r.oi_change_1h)}</td>
                   <td>{fmt(r.atr)}</td>
                   <td>{fmt(r.vol_zscore_1m)}</td>
                   <td>{fmt(r.vol_1m)}</td>
@@ -299,6 +352,7 @@ export default function Home() {
           <div className="muted">Last update: {lastUpdate? new Date(lastUpdate).toLocaleTimeString(): '—'}</div>
         </div>
       </div>
+      {modal.open && <DetailsModal symbol={modal.symbol!} exchange={modal.exchange!} closes={modal.closes||[]} onClose={()=>setModal({open:false})} />}
     </div>
   );
 }
@@ -327,18 +381,6 @@ function pctClass(n?: number | null){
   return 'muted';
 }
 
-async function openDetails(r: Metric){
-  const exchange = r.exchange || 'binance';
-  const backendBase = (process.env.NEXT_PUBLIC_BACKEND_HTTP || 'http://127.0.0.1:8000');
-  try{
-    const resp = await fetch(`${backendBase}/debug/history?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&limit=60`);
-    const j = await resp.json();
-    setModal({open:true, symbol:r.symbol, exchange, closes:j.closes||[]});
-  }catch(e){
-    setModal({open:true, symbol:r.symbol, exchange, closes:[]});
-  }
-}
-
 function fmt(n?: number | null) {
   if (n === undefined || n === null || Number.isNaN(n)) return '-';
   const abs = Math.abs(n);
@@ -362,7 +404,7 @@ function Sparkline({data}:{data:number[]}){
 
 function DetailsModal({symbol, exchange, closes, onClose}:{symbol:string; exchange:string; closes:number[]; onClose:()=>void}){
   return (
-    <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center'}} onClick={onClose}>
+    <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:9999}} onClick={onClose}>
       <div className="panel" style={{width:520}} onClick={(e)=>e.stopPropagation()}>
         <div className="toolbar">
           <div className="group"><span className="badge">{exchange}</span><strong style={{marginLeft:8}}>{symbol}</strong></div>
@@ -381,4 +423,80 @@ function fmtPct(n?: number | null) {
   const v = n*100;
   const sign = v>0?'+':'';
   return sign + v.toFixed(2) + '%';
+}
+
+function fmtMomentum(n?: number | null) {
+  if (n === undefined || n === null || Number.isNaN(n)) return '-';
+  const sign = n > 0 ? '+' : '';
+  return sign + n.toFixed(1);
+}
+
+function fmtOI(n?: number | null) {
+  if (n === undefined || n === null || Number.isNaN(n)) return '-';
+  // Format large numbers with K, M, B suffixes
+  const abs = Math.abs(n);
+  if (abs >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+  if (abs >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (abs >= 1e3) return (n / 1e3).toFixed(2) + 'K';
+  return n.toFixed(2);
+}
+
+function fmtOIPct(n?: number | null) {
+  if (n === undefined || n === null || Number.isNaN(n)) return '-';
+  const v = n * 100;
+  const sign = v > 0 ? '+' : '';
+  return sign + v.toFixed(2) + '%';
+}
+
+function momentumClass(n?: number | null) {
+  if (n === undefined || n === null || Number.isNaN(n)) return 'muted';
+  if (n > 50) return 'momentumStrong';
+  if (n > 20) return 'chgUp';
+  if (n < -50) return 'momentumWeak';
+  if (n < -20) return 'chgDown';
+  return 'muted';
+}
+
+function oiClass(n?: number | null) {
+  if (n === undefined || n === null || Number.isNaN(n)) return 'muted';
+  // OI increasing (positive) is typically bullish, decreasing is bearish
+  if (n > 0.02) return 'chgUp';  // > 2% increase
+  if (n < -0.02) return 'chgDown'; // > 2% decrease
+  return 'muted';
+}
+
+function signalClass(strength?: string | null) {
+  if (!strength) return 'muted';
+  switch(strength) {
+    case 'strong_bull': return 'signalStrongBull';
+    case 'bull': return 'signalBull';
+    case 'bear': return 'signalBear';
+    case 'strong_bear': return 'signalStrongBear';
+    default: return 'muted';
+  }
+}
+
+function fmtSignal(score?: number | null, strength?: string | null) {
+  if (score === undefined || score === null || Number.isNaN(score)) return '-';
+  
+  let emoji = '';
+  switch(strength) {
+    case 'strong_bull':
+      emoji = '🔥🔥🔥';
+      break;
+    case 'bull':
+      emoji = '🔥🔥';
+      break;
+    case 'bear':
+      emoji = '❄️❄️';
+      break;
+    case 'strong_bear':
+      emoji = '❄️❄️❄️';
+      break;
+    default:
+      emoji = '➖';
+  }
+  
+  const sign = score > 0 ? '+' : '';
+  return `${emoji} ${sign}${score.toFixed(0)}`;
 }

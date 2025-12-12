@@ -102,3 +102,13 @@ class Aggregator:
         state.last_price = price
         self.last_ingest_ts = ts_ms or int(__import__('time').time()*1000)
         await self.emit_if_due()
+    
+    async def update_open_interest(self, symbol: str, oi_value: float):
+        """Update open interest for a symbol"""
+        state = self._states.get(symbol)
+        if state is None:
+            state = SymbolState(symbol=symbol, exchange=self.exchange)
+            self._states[symbol] = state
+        state.open_interest = oi_value
+        state.oi_1m.append(oi_value)
+        # Don't emit on OI update - let the regular throttle handle it

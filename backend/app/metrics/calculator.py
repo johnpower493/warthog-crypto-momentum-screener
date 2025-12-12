@@ -25,8 +25,10 @@ class SymbolState:
         self.high_1m = RollingSeries(maxlen=maxlen)
         self.low_1m = RollingSeries(maxlen=maxlen)
         self.vol_1m = RollingSeries(maxlen=maxlen)
+        self.oi_1m = RollingSeries(maxlen=maxlen)  # open interest series
         self.last_price: Optional[float] = None
         self.atr: Optional[float] = None
+        self.open_interest: Optional[float] = None
 
     def update(self, k: Kline):
         self.close_1m.append(k.close)
@@ -50,6 +52,26 @@ class SymbolState:
         brk = breakout(self.close_1m.values, self.high_1m.values, 15)
         brkd = breakdown(self.close_1m.values, self.low_1m.values, 15)
         vwap15 = vwap(self.close_1m.values, self.vol_1m.values, 15)
+        
+        # Open Interest changes
+        oi_5m = pct_change(self.oi_1m.values, WINDOW_SHORT)
+        oi_15m = pct_change(self.oi_1m.values, WINDOW_MEDIUM)
+        oi_60m = pct_change(self.oi_1m.values, 60)
+        
+        # Momentum indicators
+        mom_5m = momentum(self.close_1m.values, WINDOW_SHORT)
+        mom_15m = momentum(self.close_1m.values, WINDOW_MEDIUM)
+        mom_score = momentum_score(self.close_1m.values)
+        
+        # Combined signal score
+        signal_sc, signal_str = calculate_signal_score(
+            momentum_score=mom_score,
+            oi_change_5m=oi_5m,
+            rvol=rvol,
+            breakout=brk,
+            vol_zscore=vol_z
+        )
+        
         return SymbolMetrics(
             symbol=self.symbol,
             exchange=self.exchange,
@@ -67,6 +89,15 @@ class SymbolState:
             breakout_15m=brk,
             breakdown_15m=brkd,
             vwap_15m=vwap15,
+            open_interest=self.open_interest,
+            oi_change_5m=oi_5m,
+            oi_change_15m=oi_15m,
+            oi_change_1h=oi_60m,
+            momentum_5m=mom_5m,
+            momentum_15m=mom_15m,
+            momentum_score=mom_score,
+            signal_score=signal_sc,
+            signal_strength=signal_str,
         )
 
 def pct_change(values, window: int) -> Optional[float]:
@@ -181,3 +212,152 @@ def zscore_abs_ret(closes, lookback: int) -> Optional[float]:
         return 0.0
     last = rets[-1]
     return (last - mean)/std
+
+def momentum(closes, window: int) -> Optional[float]:
+    """Calculate Rate of Change (ROC) momentum indicator"""
+    if len(closes) <= window:
+        return None
+    try:
+        old_price = closes[-window-1]
+        current_price = closes[-1]
+        if old_price == 0:
+            return None
+        # ROC = ((current - old) / old) * 100
+        return ((current_price - old_price) / old_price) * 100
+    except Exception:
+        return None
+
+def momentum_score(closes) -> Optional[float]:
+    """
+    Composite momentum score combining multiple timeframes
+    Returns a score from -100 (strong bearish) to +100 (strong bullish)
+    """
+    if len(closes) < 16:
+        return None
+    
+    try:
+        # Calculate momentum across multiple timeframes
+        weights = {
+            1: 0.1,   # 1m - least weight
+            3: 0.15,  # 3m
+            5: 0.25,  # 5m
+            10: 0.25, # 10m
+            15: 0.25, # 15m - most weight
+        }
+        
+        score = 0.0
+        total_weight = 0.0
+        
+        for period, weight in weights.items():
+            if len(closes) > period:
+                old = closes[-period-1]
+                curr = closes[-1]
+                if old != 0:
+                    pct_change = ((curr - old) / old) * 100
+                    # Normalize to -100 to +100 range (cap at +/-10% = +/-100 score)
+                    normalized = max(min(pct_change * 10, 100), -100)
+                    score += normalized * weight
+                    total_weight += weight
+        
+        if total_weight == 0:
+            return None
+        
+        return score / total_weight
+    except Exception:
+        return None
+
+def calculate_signal_score(
+    momentum_score: Optional[float],
+    oi_change_5m: Optional[float],
+    rvol: Optional[float],
+    breakout: Optional[float],
+    vol_zscore: Optional[float]
+) -> tuple[Optional[float], Optional[str]]:
+    """
+    Calculate combined signal score for scalping opportunities
+    
+    Combines:
+    - Momentum (40% weight)
+    - OI change direction (25% weight)
+    - Volume spike (20% weight)
+    - Breakout/breakdown (15% weight)
+    
+    Returns: (score: -100 to +100, strength: "strong_bull"|"bull"|"neutral"|"bear"|"strong_bear")
+    """
+    try:
+        score = 0.0
+        weights_sum = 0.0
+        
+        # 1. Momentum Score (40% weight)
+        if momentum_score is not None:
+            score += momentum_score * 0.4
+            weights_sum += 0.4
+        
+        # 2. OI Change (25% weight)
+        # OI increasing + price up = bullish | OI increasing + price down = bearish liquidation
+        if oi_change_5m is not None and momentum_score is not None:
+            # OI direction aligned with momentum is strong signal
+            oi_normalized = max(min(oi_change_5m * 1000, 100), -100)  # Scale OI % change
+            # If OI and momentum align, boost signal
+            if (oi_normalized > 0 and momentum_score > 0) or (oi_normalized < 0 and momentum_score < 0):
+                score += oi_normalized * 0.25
+            # If OI increases but price drops = bearish (liquidation cascade)
+            elif oi_normalized > 0 and momentum_score < 0:
+                score += -abs(oi_normalized) * 0.25
+            # If OI decreases but price rises = less conviction
+            elif oi_normalized < 0 and momentum_score > 0:
+                score += oi_normalized * 0.25
+            weights_sum += 0.25
+        
+        # 3. Volume Spike (20% weight)
+        # RVOL > 2 = confirmation, Vol Z-score shows unusual activity
+        if rvol is not None:
+            rvol_score = 0.0
+            if rvol > 3:
+                rvol_score = 100
+            elif rvol > 2:
+                rvol_score = 70
+            elif rvol > 1.5:
+                rvol_score = 40
+            elif rvol < 0.5:
+                rvol_score = -40
+            
+            # Align with momentum direction
+            if momentum_score is not None:
+                if momentum_score > 0:
+                    score += rvol_score * 0.2
+                else:
+                    score += -abs(rvol_score) * 0.2
+            else:
+                score += rvol_score * 0.2
+            weights_sum += 0.2
+        
+        # 4. Breakout/Breakdown (15% weight)
+        if breakout is not None:
+            breakout_normalized = max(min(breakout * 1000, 100), -100)
+            score += breakout_normalized * 0.15
+            weights_sum += 0.15
+        
+        if weights_sum == 0:
+            return None, None
+        
+        # Normalize to actual weight sum
+        final_score = score / weights_sum * 100
+        final_score = max(min(final_score, 100), -100)
+        
+        # Determine strength category
+        if final_score >= 70:
+            strength = "strong_bull"
+        elif final_score >= 40:
+            strength = "bull"
+        elif final_score >= -40:
+            strength = "neutral"
+        elif final_score >= -70:
+            strength = "bear"
+        else:
+            strength = "strong_bear"
+        
+        return final_score, strength
+    
+    except Exception:
+        return None, None
