@@ -38,7 +38,7 @@ type Snapshot = {
   metrics: Metric[];
 };
 
-type SortKey = 'change_5m' | 'change_15m' | 'atr' | 'vol_zscore_1m' | 'last_price' | 'symbol' | 'momentum_score' | 'oi_change_5m' | 'open_interest' | 'signal_score';
+type SortKey = 'change_1m' | 'change_5m' | 'change_15m' | 'change_60m' | 'atr' | 'vol_zscore_1m' | 'last_price' | 'symbol' | 'momentum_score' | 'oi_change_5m' | 'open_interest' | 'signal_score';
 
 export default function Home() {
   const [rows, setRows] = useState<Metric[]>([]);
@@ -48,6 +48,17 @@ export default function Home() {
   const [query, setQuery] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('signal_score');
   const [sortDir, setSortDir] = useState<'desc'|'asc'>('desc');
+  
+  const handleHeaderClick = (key: SortKey) => {
+    if (sortKey === key) {
+      // Toggle direction if clicking same column
+      setSortDir(sortDir === 'desc' ? 'asc' : 'desc');
+    } else {
+      // New column - default to desc
+      setSortKey(key);
+      setSortDir('desc');
+    }
+  };
   const [onlyFavs, setOnlyFavs] = useState(false);
   const [favs, setFavs] = useState<string[]>(() => {
     try{ return JSON.parse(localStorage.getItem('favs')||'[]'); }catch{return []}
@@ -292,23 +303,47 @@ export default function Home() {
             <thead>
               <tr>
                 <th></th>
-                <th>Symbol</th>
+                <th className="sortable" onClick={()=>handleHeaderClick('symbol')}>
+                  Symbol {sortKey==='symbol' && (sortDir==='desc'?'↓':'↑')}
+                </th>
                 <th>Exchange</th>
-                <th>Signal</th>
-                <th>Last</th>
-                <th>1m %</th>
-                <th>5m %</th>
-                <th>15m %</th>
-                <th>60m %</th>
-                <th>Momentum</th>
+                <th className="sortable" onClick={()=>handleHeaderClick('signal_score')}>
+                  Signal {sortKey==='signal_score' && (sortDir==='desc'?'↓':'↑')}
+                </th>
+                <th className="sortable" onClick={()=>handleHeaderClick('last_price')}>
+                  Last {sortKey==='last_price' && (sortDir==='desc'?'↓':'↑')}
+                </th>
+                <th className="sortable" onClick={()=>handleHeaderClick('change_1m')}>
+                  1m % {sortKey==='change_1m' && (sortDir==='desc'?'↓':'↑')}
+                </th>
+                <th className="sortable" onClick={()=>handleHeaderClick('change_5m')}>
+                  5m % {sortKey==='change_5m' && (sortDir==='desc'?'↓':'↑')}
+                </th>
+                <th className="sortable" onClick={()=>handleHeaderClick('change_15m')}>
+                  15m % {sortKey==='change_15m' && (sortDir==='desc'?'↓':'↑')}
+                </th>
+                <th className="sortable" onClick={()=>handleHeaderClick('change_60m')}>
+                  60m % {sortKey==='change_60m' && (sortDir==='desc'?'↓':'↑')}
+                </th>
+                <th className="sortable" onClick={()=>handleHeaderClick('momentum_score')}>
+                  Momentum {sortKey==='momentum_score' && (sortDir==='desc'?'↓':'↑')}
+                </th>
                 <th>Mom 5m</th>
                 <th>Mom 15m</th>
-                <th>OI</th>
-                <th>OI Δ 5m</th>
+                <th className="sortable" onClick={()=>handleHeaderClick('open_interest')}>
+                  OI {sortKey==='open_interest' && (sortDir==='desc'?'↓':'↑')}
+                </th>
+                <th className="sortable" onClick={()=>handleHeaderClick('oi_change_5m')}>
+                  OI Δ 5m {sortKey==='oi_change_5m' && (sortDir==='desc'?'↓':'↑')}
+                </th>
                 <th>OI Δ 15m</th>
                 <th>OI Δ 1h</th>
-                <th>ATR</th>
-                <th>Vol Z</th>
+                <th className="sortable" onClick={()=>handleHeaderClick('atr')}>
+                  ATR {sortKey==='atr' && (sortDir==='desc'?'↓':'↑')}
+                </th>
+                <th className="sortable" onClick={()=>handleHeaderClick('vol_zscore_1m')}>
+                  Vol Z {sortKey==='vol_zscore_1m' && (sortDir==='desc'?'↓':'↑')}
+                </th>
                 <th>Vol 1m</th>
                 <th>RVOL 1m</th>
                 <th>Breakout 15m</th>

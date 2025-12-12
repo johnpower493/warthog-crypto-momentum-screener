@@ -28,6 +28,8 @@ a{color:inherit}
 .tableWrap{overflow:auto}
 .table{width:100%;border-collapse:separate;border-spacing:0}
 .table thead th{position:sticky;top:0;background:var(--panel); z-index:1; text-align:left;padding:12px;border-bottom:1px solid var(--border);font-weight:600;font-size:12px;color:var(--muted)}
+.table thead th.sortable{cursor:pointer;user-select:none}
+.table thead th.sortable:hover{color:var(--text);background:#151d2b}
 .table tbody td{padding:12px;border-bottom:1px solid var(--border);}
 .table tbody tr{background:var(--row)}
 .table tbody tr:hover{background:#0e1a2b}
