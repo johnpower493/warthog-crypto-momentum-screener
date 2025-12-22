@@ -38,7 +38,21 @@ type Snapshot = {
   metrics: Metric[];
 };
 
-type SortKey = 'change_1m' | 'change_5m' | 'change_15m' | 'change_60m' | 'atr' | 'vol_zscore_1m' | 'last_price' | 'symbol' | 'momentum_score' | 'oi_change_5m' | 'open_interest' | 'signal_score';
+type SortKey =
+  | 'change_1m'
+  | 'change_5m'
+  | 'change_15m'
+  | 'change_60m'
+  | 'atr'
+  | 'vol_zscore_1m'
+  | 'last_price'
+  | 'symbol'
+  | 'momentum_score'
+  | 'oi_change_5m'
+  | 'open_interest'
+  | 'signal_score'
+  | 'breakout_15m'
+  | 'vwap_15m';
 
 export default function Home() {
   const [rows, setRows] = useState<Metric[]>([]);
@@ -53,7 +67,9 @@ export default function Home() {
   const [query, setQuery] = useState('');
 
   // Quick filters / presets
-  const [preset, setPreset] = useState<'none' | 'gainers5m' | 'losers5m' | 'highSignal'>('none');
+  const [preset, setPreset] = useState<
+    'none' | 'gainers5m' | 'losers5m' | 'highSignal' | 'volatile5m' | 'highOiDelta5m' | 'breakout15m'
+  >('none');
   const [minSignal, setMinSignal] = useState<number | ''>('');
   const [minAbs5m, setMinAbs5m] = useState<number | ''>('');
 
@@ -165,6 +181,9 @@ export default function Home() {
     if (preset === 'gainers5m') base = base.filter((r) => (r.change_5m ?? -Infinity) > 0);
     if (preset === 'losers5m') base = base.filter((r) => (r.change_5m ?? Infinity) < 0);
     if (preset === 'highSignal') base = base.filter((r) => (r.signal_score ?? -Infinity) >= 70);
+    if (preset === 'volatile5m') base = base.filter((r) => Math.abs(r.change_5m ?? 0) > 0);
+    if (preset === 'highOiDelta5m') base = base.filter((r) => Math.abs(r.oi_change_5m ?? 0) > 0);
+    if (preset === 'breakout15m') base = base.filter((r) => (r.breakout_15m ?? 0) > 0);
 
     return base;
   }, [rows, query, onlyFavs, favs, preset, minSignal, minAbs5m]);
@@ -184,12 +203,22 @@ export default function Home() {
       }
 
       // Numeric-ish sort for all other keys
-      const na = (va === null || va === undefined || Number.isNaN(va))
+      let na = (va === null || va === undefined || Number.isNaN(va))
         ? (sortDir === 'desc' ? -Infinity : Infinity)
         : (va as number);
-      const nb = (vb === null || vb === undefined || Number.isNaN(vb))
+      let nb = (vb === null || vb === undefined || Number.isNaN(vb))
         ? (sortDir === 'desc' ? -Infinity : Infinity)
         : (vb as number);
+
+      // If we're in an "absolute" preset, sort by absolute value for the relevant key
+      if (preset === 'volatile5m' && sortKey === 'change_5m') {
+        na = Math.abs(na);
+        nb = Math.abs(nb);
+      }
+      if (preset === 'highOiDelta5m' && sortKey === 'oi_change_5m') {
+        na = Math.abs(na);
+        nb = Math.abs(nb);
+      }
 
       if (na === nb) {
         // Stable tie-breaker: always alphabetical symbol (case-insensitive, numeric-aware)
@@ -199,7 +228,7 @@ export default function Home() {
     };
 
     return [...filtered].sort(cmp);
-  }, [filtered, sortKey, sortDir]);
+  }, [filtered, sortKey, sortDir, preset]);
 
   // Top movers (based on full universe, not filtered)
   const movers5mUp = useMemo(() => topMovers(rows, 'change_5m', 'up'), [rows]);
@@ -239,9 +268,45 @@ export default function Home() {
             <input className="input" placeholder="Search symbol (e.g. BTC)" value={query} onChange={e=>setQuery(e.target.value)} />
 
             <div className="group" style={{ gap: 6 }}>
-              <button className={"button " + (preset==='gainers5m'?'buttonActive':'')} onClick={()=>setPreset(preset==='gainers5m'?'none':'gainers5m')}>Gainers 5m</button>
-              <button className={"button " + (preset==='losers5m'?'buttonActive':'')} onClick={()=>setPreset(preset==='losers5m'?'none':'losers5m')}>Losers 5m</button>
-              <button className={"button " + (preset==='highSignal'?'buttonActive':'')} onClick={()=>setPreset(preset==='highSignal'?'none':'highSignal')}>High Signal</button>
+              <button
+                className={"button " + (preset==='gainers5m'?'buttonActive':'')}
+                onClick={()=>{ setPreset(preset==='gainers5m'?'none':'gainers5m'); setSortKey('change_5m'); setSortDir('desc'); }}
+              >
+                Gainers 5m
+              </button>
+              <button
+                className={"button " + (preset==='losers5m'?'buttonActive':'')}
+                onClick={()=>{ setPreset(preset==='losers5m'?'none':'losers5m'); setSortKey('change_5m'); setSortDir('asc'); }}
+              >
+                Losers 5m
+              </button>
+              <button
+                className={"button " + (preset==='volatile5m'?'buttonActive':'')}
+                onClick={()=>{ setPreset(preset==='volatile5m'?'none':'volatile5m'); setSortKey('change_5m'); setSortDir('desc'); }}
+                title="Sorts by largest 5m moves (use Min |5m| % to threshold)"
+              >
+                Volatile 5m
+              </button>
+              <button
+                className={"button " + (preset==='highOiDelta5m'?'buttonActive':'')}
+                onClick={()=>{ setPreset(preset==='highOiDelta5m'?'none':'highOiDelta5m'); setSortKey('oi_change_5m'); setSortDir('desc'); }}
+                title="Sorts by OI Δ 5m"
+              >
+                High OI Δ 5m
+              </button>
+              <button
+                className={"button " + (preset==='breakout15m'?'buttonActive':'')}
+                onClick={()=>{ setPreset(preset==='breakout15m'?'none':'breakout15m'); setSortKey('breakout_15m'); setSortDir('desc'); }}
+                title="Sorts by breakout_15m"
+              >
+                Breakout 15m
+              </button>
+              <button
+                className={"button " + (preset==='highSignal'?'buttonActive':'')}
+                onClick={()=>{ setPreset(preset==='highSignal'?'none':'highSignal'); setSortKey('signal_score'); setSortDir('desc'); }}
+              >
+                High Signal
+              </button>
               <button className="button" onClick={()=>{setPreset('none'); setMinSignal(''); setMinAbs5m('');}}>Reset</button>
             </div>
 

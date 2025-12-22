@@ -40,7 +40,9 @@ export default function BybitPage() {
   const [status, setStatus] = useState<'disconnected'|'connecting'|'connected'>('connecting');
 
   const [query, setQuery] = useState('');
-  const [preset, setPreset] = useState<'none' | 'gainers5m' | 'losers5m' | 'highSignal'>('gainers5m');
+  const [preset, setPreset] = useState<
+    'none' | 'gainers5m' | 'losers5m' | 'highSignal' | 'volatile5m' | 'highOiDelta5m' | 'breakout15m'
+  >('gainers5m');
   const [minSignal, setMinSignal] = useState<number | ''>('');
   const [minAbs5m, setMinAbs5m] = useState<number | ''>('');
 
@@ -75,13 +77,33 @@ export default function BybitPage() {
     if (preset === 'gainers5m') base = base.filter((r) => (r.change_5m ?? -Infinity) > 0);
     if (preset === 'losers5m') base = base.filter((r) => (r.change_5m ?? Infinity) < 0);
     if (preset === 'highSignal') base = base.filter((r) => (r.signal_score ?? -Infinity) >= 70);
+    if (preset === 'volatile5m') base = base.filter((r) => Math.abs(r.change_5m ?? 0) > 0);
+    if (preset === 'highOiDelta5m') base = base.filter((r) => Math.abs(r.oi_change_5m ?? 0) > 0);
+    if (preset === 'breakout15m') base = base.filter((r) => (r.breakout_15m ?? 0) > 0);
 
     return base;
   }, [rows, query, preset, minSignal, minAbs5m]);
 
   const sorted = useMemo(() => {
-    return [...filtered].sort((a, b) => (b.change_5m ?? -Infinity) - (a.change_5m ?? -Infinity));
-  }, [filtered]);
+    const arr = [...filtered];
+
+    // Preset-driven ordering
+    if (preset === 'losers5m') {
+      return arr.sort((a, b) => (a.change_5m ?? Infinity) - (b.change_5m ?? Infinity));
+    }
+    if (preset === 'volatile5m') {
+      return arr.sort((a, b) => Math.abs(b.change_5m ?? 0) - Math.abs(a.change_5m ?? 0));
+    }
+    if (preset === 'highOiDelta5m') {
+      return arr.sort((a, b) => Math.abs(b.oi_change_5m ?? 0) - Math.abs(a.oi_change_5m ?? 0));
+    }
+    if (preset === 'breakout15m') {
+      return arr.sort((a, b) => (b.breakout_15m ?? -Infinity) - (a.breakout_15m ?? -Infinity));
+    }
+
+    // Default: gainers 5m
+    return arr.sort((a, b) => (b.change_5m ?? -Infinity) - (a.change_5m ?? -Infinity));
+  }, [filtered, preset]);
 
   return (
     <div className="container">
@@ -97,6 +119,9 @@ export default function BybitPage() {
             <div className="group" style={{ gap: 6 }}>
               <button className={"button " + (preset==='gainers5m'?'buttonActive':'')} onClick={()=>setPreset(preset==='gainers5m'?'none':'gainers5m')}>Gainers 5m</button>
               <button className={"button " + (preset==='losers5m'?'buttonActive':'')} onClick={()=>setPreset(preset==='losers5m'?'none':'losers5m')}>Losers 5m</button>
+              <button className={"button " + (preset==='volatile5m'?'buttonActive':'')} onClick={()=>setPreset(preset==='volatile5m'?'none':'volatile5m')}>Volatile 5m</button>
+              <button className={"button " + (preset==='highOiDelta5m'?'buttonActive':'')} onClick={()=>setPreset(preset==='highOiDelta5m'?'none':'highOiDelta5m')}>High OI Δ 5m</button>
+              <button className={"button " + (preset==='breakout15m'?'buttonActive':'')} onClick={()=>setPreset(preset==='breakout15m'?'none':'breakout15m')}>Breakout 15m</button>
               <button className={"button " + (preset==='highSignal'?'buttonActive':'')} onClick={()=>setPreset(preset==='highSignal'?'none':'highSignal')}>High Signal</button>
               <button className="button" onClick={()=>{setPreset('gainers5m'); setMinSignal(''); setMinAbs5m('');}}>Reset</button>
             </div>
