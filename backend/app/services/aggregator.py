@@ -13,8 +13,16 @@ class Aggregator:
         self._states: Dict[str, SymbolState] = {}
         self._subscribers: List[asyncio.Queue] = []
         self._lock = asyncio.Lock()
-        self.last_emit_ts: int = 0
-        self.last_ingest_ts: int = 0
+        # Initialize timestamps to current time to prevent false watchdog triggers
+        import time
+        now_ms = int(time.time() * 1000)
+        self.last_emit_ts: int = now_ms
+        # NOTE: We track kline and ticker ingest separately so watchdogs can
+        # detect when one stream dies while the other continues.
+        self.last_kline_ingest_ts: int = now_ms
+        self.last_ticker_ingest_ts: int = now_ms
+        # Backwards-compatible aggregate timestamp (max of the above)
+        self.last_ingest_ts: int = now_ms
         from ..config import SNAPSHOT_INTERVAL_MS
         self._throttle_ms: int = SNAPSHOT_INTERVAL_MS
 
@@ -24,7 +32,10 @@ class Aggregator:
             state = SymbolState(symbol=k.symbol, exchange=self.exchange)
             self._states[k.symbol] = state
         state.update(k)
-        self.last_ingest_ts = int(asyncio.get_event_loop().time() * 1000)
+        import time
+        now_ms = int(time.time() * 1000)
+        self.last_kline_ingest_ts = now_ms
+        self.last_ingest_ts = max(self.last_kline_ingest_ts, self.last_ticker_ingest_ts)
         # Throttled emit
         await self.emit_if_due()
 
@@ -100,7 +111,10 @@ class Aggregator:
             state = SymbolState(symbol=symbol, exchange=self.exchange)
             self._states[symbol] = state
         state.last_price = price
-        self.last_ingest_ts = ts_ms or int(__import__('time').time()*1000)
+        import time
+        now_ms = ts_ms or int(time.time() * 1000)
+        self.last_ticker_ingest_ts = now_ms
+        self.last_ingest_ts = max(self.last_kline_ingest_ts, self.last_ticker_ingest_ts)
         await self.emit_if_due()
     
     async def update_open_interest(self, symbol: str, oi_value: float):

@@ -32,6 +32,9 @@ async def health():
 
 @app.get("/debug/status")
 async def debug_status():
+    import time
+    now_ms = int(time.time() * 1000)
+    
     try:
         bin_syms = await stream_mgr.binance.symbols()
     except Exception:
@@ -40,18 +43,60 @@ async def debug_status():
         byb_syms = await stream_mgr.bybit.symbols()  # type: ignore[attr-defined]
     except Exception:
         byb_syms = []
+    
+    # Check task health
+    def check_task(task, name):
+        if task is None:
+            return {"status": "not_started", "error": None}
+        elif task.done():
+            exc = None
+            try:
+                exc = task.exception()
+            except Exception:
+                pass
+            return {"status": "dead", "error": str(exc) if exc else "completed"}
+        else:
+            return {"status": "running", "error": None}
+    
+    bin_last_ingest = getattr(stream_mgr.agg, 'last_ingest_ts', 0)
+    bin_last_kline_ingest = getattr(stream_mgr.agg, 'last_kline_ingest_ts', bin_last_ingest)
+    bin_last_ticker_ingest = getattr(stream_mgr.agg, 'last_ticker_ingest_ts', bin_last_ingest)
+    bin_last_emit = getattr(stream_mgr.agg, 'last_emit_ts', 0)
+    bybit_last_ingest = getattr(stream_mgr.agg_bybit, 'last_ingest_ts', 0) if hasattr(stream_mgr, 'agg_bybit') else 0
+    bybit_last_kline_ingest = getattr(stream_mgr.agg_bybit, 'last_kline_ingest_ts', bybit_last_ingest) if hasattr(stream_mgr, 'agg_bybit') else 0
+    bybit_last_ticker_ingest = getattr(stream_mgr.agg_bybit, 'last_ticker_ingest_ts', bybit_last_ingest) if hasattr(stream_mgr, 'agg_bybit') else 0
+    bybit_last_emit = getattr(stream_mgr.agg_bybit, 'last_emit_ts', 0) if hasattr(stream_mgr, 'agg_bybit') else 0
+    
     return {
         "binance": {
             "symbols": len(bin_syms),
             "state": getattr(stream_mgr.agg, 'state_count', lambda: 0)(),
-            "last_emit_ts": getattr(stream_mgr.agg, 'last_emit_ts', 0),
-            "last_ingest_ts": getattr(stream_mgr.agg, 'last_ingest_ts', 0),
+            "last_emit_ts": bin_last_emit,
+            "last_ingest_ts": bin_last_ingest,
+            "last_kline_ingest_ts": bin_last_kline_ingest,
+            "last_ticker_ingest_ts": bin_last_ticker_ingest,
+            "last_ingest_age_s": (now_ms - bin_last_ingest) / 1000 if bin_last_ingest else None,
+            "last_kline_ingest_age_s": (now_ms - bin_last_kline_ingest) / 1000 if bin_last_kline_ingest else None,
+            "last_ticker_ingest_age_s": (now_ms - bin_last_ticker_ingest) / 1000 if bin_last_ticker_ingest else None,
+            "tasks": {
+                "kline": check_task(stream_mgr._task, "binance_kline"),
+                "ticker": check_task(stream_mgr._task_bin_ticker, "binance_ticker"),
+            }
         },
         "bybit": {
             "symbols": len(byb_syms),
             "state": getattr(stream_mgr.agg_bybit, 'state_count', lambda: 0)() if hasattr(stream_mgr, 'agg_bybit') else 0,
-            "last_emit_ts": getattr(stream_mgr.agg_bybit, 'last_emit_ts', 0) if hasattr(stream_mgr, 'agg_bybit') else 0,
-            "last_ingest_ts": getattr(stream_mgr.agg_bybit, 'last_ingest_ts', 0) if hasattr(stream_mgr, 'agg_bybit') else 0,
+            "last_emit_ts": bybit_last_emit,
+            "last_ingest_ts": bybit_last_ingest,
+            "last_kline_ingest_ts": bybit_last_kline_ingest,
+            "last_ticker_ingest_ts": bybit_last_ticker_ingest,
+            "last_ingest_age_s": (now_ms - bybit_last_ingest) / 1000 if bybit_last_ingest else None,
+            "last_kline_ingest_age_s": (now_ms - bybit_last_kline_ingest) / 1000 if bybit_last_kline_ingest else None,
+            "last_ticker_ingest_age_s": (now_ms - bybit_last_ticker_ingest) / 1000 if bybit_last_ticker_ingest else None,
+            "tasks": {
+                "kline": check_task(stream_mgr._task_bybit, "bybit_kline"),
+                "ticker": check_task(stream_mgr._task_bybit_ticker, "bybit_ticker"),
+            }
         }
     }
 

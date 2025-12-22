@@ -91,15 +91,33 @@ logger = logging.getLogger(__name__)
 
 async def _connect_and_stream(url: str) -> AsyncIterator[str]:
     backoff = 1.0
+    connection_count = 0
     while True:
         try:
-            logger.info(f"Connecting to Binance WS: {url}")
-            async with websockets.connect(url, ping_interval=WS_PING_INTERVAL, max_queue=2048) as ws:
+            connection_count += 1
+            logger.info(f"Connecting to Binance WS (attempt #{connection_count})")
+            async with websockets.connect(
+                url, 
+                ping_interval=WS_PING_INTERVAL, 
+                ping_timeout=60,  # Wait up to 60s for pong response
+                close_timeout=10,  # Timeout for close handshake
+                max_queue=2048
+            ) as ws:
                 backoff = 1.0
-                logger.info("Binance WS connected")
+                logger.info(f"Binance WS connected successfully (connection #{connection_count})")
+                message_count = 0
                 async for message in ws:
+                    message_count += 1
+                    if message_count % 1000 == 0:
+                        logger.debug(f"Binance WS: received {message_count} messages on connection #{connection_count}")
                     yield message
+                # If we exit the loop normally (connection closed gracefully)
+                logger.warning(f"Binance WS connection #{connection_count} closed gracefully after {message_count} messages")
+        except websockets.exceptions.ConnectionClosed as e:
+            logger.warning(f"Binance WS connection #{connection_count} closed: code={e.code}, reason={e.reason}; reconnecting in {backoff:.1f}s")
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30)
         except Exception as e:
-            logger.warning(f"Binance WS error: {e}; reconnecting in {backoff:.1f}s")
+            logger.error(f"Binance WS connection #{connection_count} error: {type(e).__name__}: {e}; reconnecting in {backoff:.1f}s")
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30)

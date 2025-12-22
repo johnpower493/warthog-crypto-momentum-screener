@@ -17,12 +17,23 @@ async def stream_minitickers(base_ws_url: str, symbols: List[str]) -> AsyncItera
     params = "/".join([f"{s.lower()}@miniTicker" for s in symbols])
     url = f"{base_ws_url}?streams={params}"
     backoff = 1.0
+    connection_count = 0
     while True:
         try:
-            log.info(f"Connecting Binance miniTicker WS: {url}")
-            async with websockets.connect(url, ping_interval=WS_PING_INTERVAL, max_queue=4096) as ws:
+            connection_count += 1
+            log.info(f"Connecting Binance miniTicker WS (attempt #{connection_count})")
+            async with websockets.connect(
+                url, 
+                ping_interval=WS_PING_INTERVAL, 
+                ping_timeout=60,  # Wait up to 60s for pong response
+                close_timeout=10,  # Timeout for close handshake
+                max_queue=4096
+            ) as ws:
                 backoff = 1.0
+                log.info(f"Binance miniTicker WS connected (connection #{connection_count})")
+                message_count = 0
                 async for message in ws:
+                    message_count += 1
                     try:
                         data = json.loads(message)
                         payload = data.get("data", {})
@@ -34,7 +45,12 @@ async def stream_minitickers(base_ws_url: str, symbols: List[str]) -> AsyncItera
                         yield sym, c, ts
                     except Exception:
                         continue
+                log.warning(f"Binance miniTicker WS connection #{connection_count} closed after {message_count} messages")
+        except websockets.exceptions.ConnectionClosed as e:
+            log.warning(f"Binance miniTicker WS connection #{connection_count} closed: code={e.code}, reason={e.reason}; reconnecting in {backoff:.1f}s")
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30)
         except Exception as e:
-            log.warning(f"Binance miniTicker WS error: {e}; reconnecting in {backoff:.1f}s")
+            log.error(f"Binance miniTicker WS error: {type(e).__name__}: {e}; reconnecting in {backoff:.1f}s")
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30)

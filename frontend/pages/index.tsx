@@ -144,17 +144,35 @@ export default function Home() {
   }, [rows, query, onlyFavs, favs]);
 
   const sorted = useMemo(() => {
-    const val = (r: Metric) => {
-      const v = (r as any)[sortKey];
-      if (v === null || v === undefined || Number.isNaN(v)) return sortDir==='desc'? -Infinity : Infinity;
-      return v;
+    const cmpString = (a: string, b: string) =>
+      a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+
+    const cmp = (a: Metric, b: Metric) => {
+      const va = (a as any)[sortKey];
+      const vb = (b as any)[sortKey];
+
+      // String sort (e.g. Symbol)
+      if (sortKey === 'symbol') {
+        const res = cmpString(a.symbol ?? '', b.symbol ?? '');
+        return sortDir === 'desc' ? -res : res;
+      }
+
+      // Numeric-ish sort for all other keys
+      const na = (va === null || va === undefined || Number.isNaN(va))
+        ? (sortDir === 'desc' ? -Infinity : Infinity)
+        : (va as number);
+      const nb = (vb === null || vb === undefined || Number.isNaN(vb))
+        ? (sortDir === 'desc' ? -Infinity : Infinity)
+        : (vb as number);
+
+      if (na === nb) {
+        // Stable tie-breaker: always alphabetical symbol (case-insensitive, numeric-aware)
+        return cmpString(a.symbol ?? '', b.symbol ?? '');
+      }
+      return sortDir === 'desc' ? nb - na : na - nb;
     };
-    const arr = [...filtered].sort((a,b)=>{
-      const va = val(a); const vb = val(b);
-      if (va === vb) return a.symbol.localeCompare(b.symbol);
-      return sortDir==='desc' ? (vb as number) - (va as number) : (va as number) - (vb as number);
-    });
-    return arr;
+
+    return [...filtered].sort(cmp);
   }, [filtered, sortKey, sortDir]);
 
   // Top movers (based on full universe, not filtered)

@@ -104,23 +104,38 @@ async def _connect_and_stream(url: str, symbols: List[str]) -> AsyncIterator[str
     # Subscribe in batches to avoid frame limits
     batch = 50
     args = [f"kline.1.{s}" for s in symbols]
-    for i in range(0, len(args), batch):
-        pass
     backoff = 1.0
+    connection_count = 0
     while True:
         try:
-            log.info(f"Connecting to Bybit WS: {url}")
-            async with websockets.connect(url, ping_interval=WS_PING_INTERVAL, max_queue=2048) as ws:
+            connection_count += 1
+            log.info(f"Connecting to Bybit WS (attempt #{connection_count})")
+            async with websockets.connect(
+                url, 
+                ping_interval=WS_PING_INTERVAL, 
+                ping_timeout=60,  # Wait up to 60s for pong response
+                close_timeout=10,  # Timeout for close handshake
+                max_queue=2048
+            ) as ws:
                 backoff = 1.0
-                log.info("Bybit WS connected")
+                log.info(f"Bybit WS connected successfully (connection #{connection_count})")
                 # Subscribe in batches
                 for i in range(0, len(args), batch):
                     sub = {"op": "subscribe", "args": args[i:i+batch]}
                     await ws.send(json.dumps(sub))
                     await asyncio.sleep(0.2)
+                message_count = 0
                 async for message in ws:
+                    message_count += 1
+                    if message_count % 1000 == 0:
+                        log.debug(f"Bybit WS: received {message_count} messages on connection #{connection_count}")
                     yield message
+                log.warning(f"Bybit WS connection #{connection_count} closed gracefully after {message_count} messages")
+        except websockets.exceptions.ConnectionClosed as e:
+            log.warning(f"Bybit WS connection #{connection_count} closed: code={e.code}, reason={e.reason}; reconnecting in {backoff:.1f}s")
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30)
         except Exception as e:
-            log.warning(f"Bybit WS error: {e}; reconnecting in {backoff:.1f}s")
+            log.error(f"Bybit WS connection #{connection_count} error: {type(e).__name__}: {e}; reconnecting in {backoff:.1f}s")
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30)

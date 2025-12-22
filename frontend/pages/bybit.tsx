@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import '../styles/globals.css';
 
 type Metric = {
   symbol: string;

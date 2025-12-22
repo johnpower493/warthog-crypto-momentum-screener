@@ -27,6 +27,12 @@ WS_PING_INTERVAL = float(os.getenv("WS_PING_INTERVAL", "15"))
 # Emission cadence
 SNAPSHOT_INTERVAL_MS = int(os.getenv("SNAPSHOT_INTERVAL_MS", "30000"))  # throttle aggregator emits (30 seconds)
 WS_HEARTBEAT_SEC = float(os.getenv("WS_HEARTBEAT_SEC", "30"))  # periodic WS snapshot sender (30 seconds)
+
+# Optional periodic "full refresh" (restart streams + backfill + refetch OI) aligned to 5m boundaries
+ENABLE_FULL_REFRESH_5M = os.getenv("ENABLE_FULL_REFRESH_5M", "false").lower() in {"1", "true", "yes"}
+FULL_REFRESH_BACKFILL_LIMIT = int(os.getenv("FULL_REFRESH_BACKFILL_LIMIT", "200"))
+FULL_REFRESH_OFFSET_SEC = int(os.getenv("FULL_REFRESH_OFFSET_SEC", "2"))  # wait N seconds after boundary
+
 # Bybit endpoints (public)
 BYBIT_REST = os.getenv("BYBIT_REST", "https://api.bybit.com")
 BYBIT_WS_LINEAR = os.getenv("BYBIT_WS_LINEAR", "wss://stream.bybit.com/v5/public/linear")

@@ -40,10 +40,12 @@ class SymbolState:
             self.atr = compute_atr(list(self.high_1m.values), list(self.low_1m.values), list(self.close_1m.values))
 
     def compute_metrics(self) -> SymbolMetrics:
-        ch_1 = pct_change(self.close_1m.values, 1)
-        ch_5 = pct_change(self.close_1m.values, WINDOW_SHORT)
-        ch_15 = pct_change(self.close_1m.values, WINDOW_MEDIUM)
-        ch_60 = pct_change(self.close_1m.values, 60)
+        # Use last_price for real-time changes if available, otherwise use close_1m
+        current_price = self.last_price if self.last_price is not None else (self.close_1m.last() or 0.0)
+        ch_1 = pct_change_with_current(self.close_1m.values, 1, current_price)
+        ch_5 = pct_change_with_current(self.close_1m.values, WINDOW_SHORT, current_price)
+        ch_15 = pct_change_with_current(self.close_1m.values, WINDOW_MEDIUM, current_price)
+        ch_60 = pct_change_with_current(self.close_1m.values, 60, current_price)
         vol_z = zscore_abs_ret(self.close_1m.values, VOL_LOOKBACK)
         v1 = sum_tail(self.vol_1m.values, 1)
         v5 = sum_tail(self.vol_1m.values, 5)
@@ -58,10 +60,10 @@ class SymbolState:
         oi_15m = pct_change(self.oi_1m.values, WINDOW_MEDIUM)
         oi_60m = pct_change(self.oi_1m.values, 60)
         
-        # Momentum indicators
-        mom_5m = momentum(self.close_1m.values, WINDOW_SHORT)
-        mom_15m = momentum(self.close_1m.values, WINDOW_MEDIUM)
-        mom_score = momentum_score(self.close_1m.values)
+        # Momentum indicators (use current price for real-time momentum)
+        mom_5m = momentum_with_current(self.close_1m.values, WINDOW_SHORT, current_price)
+        mom_15m = momentum_with_current(self.close_1m.values, WINDOW_MEDIUM, current_price)
+        mom_score = momentum_score_with_current(self.close_1m.values, current_price)
         
         # Combined signal score
         signal_sc, signal_str = calculate_signal_score(
@@ -109,6 +111,19 @@ def pct_change(values, window: int) -> Optional[float]:
         if a == 0:
             return None
         return (b - a) / a
+    except Exception:
+        return None
+
+def pct_change_with_current(values, window: int, current_price: float) -> Optional[float]:
+    """Calculate percentage change using current real-time price against historical values"""
+    if len(values) < window:
+        return None
+    try:
+        # Look back 'window' periods from the last closed candle
+        a = values[-window]
+        if a == 0:
+            return None
+        return (current_price - a) / a
     except Exception:
         return None
 
@@ -227,6 +242,19 @@ def momentum(closes, window: int) -> Optional[float]:
     except Exception:
         return None
 
+def momentum_with_current(closes, window: int, current_price: float) -> Optional[float]:
+    """Calculate Rate of Change (ROC) momentum indicator with current real-time price"""
+    if len(closes) < window:
+        return None
+    try:
+        old_price = closes[-window]
+        if old_price == 0:
+            return None
+        # ROC = ((current - old) / old) * 100
+        return ((current_price - old_price) / old_price) * 100
+    except Exception:
+        return None
+
 def momentum_score(closes) -> Optional[float]:
     """
     Composite momentum score combining multiple timeframes
@@ -254,6 +282,44 @@ def momentum_score(closes) -> Optional[float]:
                 curr = closes[-1]
                 if old != 0:
                     pct_change = ((curr - old) / old) * 100
+                    # Normalize to -100 to +100 range (cap at +/-10% = +/-100 score)
+                    normalized = max(min(pct_change * 10, 100), -100)
+                    score += normalized * weight
+                    total_weight += weight
+        
+        if total_weight == 0:
+            return None
+        
+        return score / total_weight
+    except Exception:
+        return None
+
+def momentum_score_with_current(closes, current_price: float) -> Optional[float]:
+    """
+    Composite momentum score combining multiple timeframes using current real-time price
+    Returns a score from -100 (strong bearish) to +100 (strong bullish)
+    """
+    if len(closes) < 15:
+        return None
+    
+    try:
+        # Calculate momentum across multiple timeframes
+        weights = {
+            1: 0.1,   # 1m - least weight
+            3: 0.15,  # 3m
+            5: 0.25,  # 5m
+            10: 0.25, # 10m
+            15: 0.25, # 15m - most weight
+        }
+        
+        score = 0.0
+        total_weight = 0.0
+        
+        for period, weight in weights.items():
+            if len(closes) >= period:
+                old = closes[-period]
+                if old != 0:
+                    pct_change = ((current_price - old) / old) * 100
                     # Normalize to -100 to +100 range (cap at +/-10% = +/-100 score)
                     normalized = max(min(pct_change * 10, 100), -100)
                     score += normalized * weight
