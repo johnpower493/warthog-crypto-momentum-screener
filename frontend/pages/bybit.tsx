@@ -39,6 +39,11 @@ export default function BybitPage() {
   const [rows, setRows] = useState<Metric[]>([]);
   const [status, setStatus] = useState<'disconnected'|'connecting'|'connected'>('connecting');
 
+  const [query, setQuery] = useState('');
+  const [preset, setPreset] = useState<'none' | 'gainers5m' | 'losers5m' | 'highSignal'>('gainers5m');
+  const [minSignal, setMinSignal] = useState<number | ''>('');
+  const [minAbs5m, setMinAbs5m] = useState<number | ''>('');
+
   useEffect(() => {
     const defaultUrl = 'ws://localhost:8000/ws/screener/bybit';
     const base = process.env.NEXT_PUBLIC_BACKEND_WS || defaultUrl.replace('/ws/screener','/ws/screener');
@@ -58,9 +63,25 @@ export default function BybitPage() {
     return () => ws.close();
   }, []);
 
+  const filtered = useMemo(() => {
+    const q = query.trim().toUpperCase();
+    let base = rows;
+
+    if (q) base = base.filter((r) => r.symbol.includes(q));
+
+    if (minSignal !== '') base = base.filter((r) => (r.signal_score ?? -Infinity) >= (minSignal as number));
+    if (minAbs5m !== '') base = base.filter((r) => Math.abs(r.change_5m ?? 0) >= (minAbs5m as number) / 100);
+
+    if (preset === 'gainers5m') base = base.filter((r) => (r.change_5m ?? -Infinity) > 0);
+    if (preset === 'losers5m') base = base.filter((r) => (r.change_5m ?? Infinity) < 0);
+    if (preset === 'highSignal') base = base.filter((r) => (r.signal_score ?? -Infinity) >= 70);
+
+    return base;
+  }, [rows, query, preset, minSignal, minAbs5m]);
+
   const sorted = useMemo(() => {
-    return [...rows].sort((a, b) => (b.change_5m ?? -Infinity) - (a.change_5m ?? -Infinity));
-  }, [rows]);
+    return [...filtered].sort((a, b) => (b.change_5m ?? -Infinity) - (a.change_5m ?? -Infinity));
+  }, [filtered]);
 
   return (
     <div className="container">
@@ -70,7 +91,41 @@ export default function BybitPage() {
             <span className="badge">Exchange: Bybit Perp</span>
             <span className="badge">Pairs: {sorted.length}</span>
           </div>
-          <div className="badge">{status==='connected'?'Live':'Disconnected'}</div>
+          <div className="group">
+            <input className="input" placeholder="Search symbol (e.g. BTC)" value={query} onChange={e=>setQuery(e.target.value)} />
+
+            <div className="group" style={{ gap: 6 }}>
+              <button className={"button " + (preset==='gainers5m'?'buttonActive':'')} onClick={()=>setPreset(preset==='gainers5m'?'none':'gainers5m')}>Gainers 5m</button>
+              <button className={"button " + (preset==='losers5m'?'buttonActive':'')} onClick={()=>setPreset(preset==='losers5m'?'none':'losers5m')}>Losers 5m</button>
+              <button className={"button " + (preset==='highSignal'?'buttonActive':'')} onClick={()=>setPreset(preset==='highSignal'?'none':'highSignal')}>High Signal</button>
+              <button className="button" onClick={()=>{setPreset('gainers5m'); setMinSignal(''); setMinAbs5m('');}}>Reset</button>
+            </div>
+
+            <input
+              className="input"
+              style={{ minWidth: 120 }}
+              inputMode="numeric"
+              placeholder="Min Signal"
+              value={minSignal}
+              onChange={(e)=>{
+                const v = e.target.value.trim();
+                setMinSignal(v===''? '' : Number(v));
+              }}
+            />
+            <input
+              className="input"
+              style={{ minWidth: 140 }}
+              inputMode="numeric"
+              placeholder="Min |5m| %"
+              value={minAbs5m}
+              onChange={(e)=>{
+                const v = e.target.value.trim();
+                setMinAbs5m(v===''? '' : Number(v));
+              }}
+            />
+
+            <span className="badge">{status==='connected'?'Live':'Disconnected'}</span>
+          </div>
         </div>
         <div className="tableWrap">
           <table className="table">
@@ -79,20 +134,20 @@ export default function BybitPage() {
                 <th>Symbol</th>
                 <th>Signal</th>
                 <th>Last</th>
-                <th>1m %</th>
+                <th className="hide-sm">1m %</th>
                 <th>5m %</th>
                 <th>15m %</th>
-                <th>60m %</th>
-                <th>Momentum</th>
-                <th>OI</th>
-                <th>OI Δ 5m</th>
-                <th>OI Δ 1h</th>
-                <th>ATR</th>
-                <th>Vol Z</th>
-                <th>Vol 1m</th>
-                <th>RVOL 1m</th>
-                <th>Breakout 15m</th>
-                <th>VWAP 15m</th>
+                <th className="hide-md">60m %</th>
+                <th className="hide-md">Momentum</th>
+                <th className="hide-sm">OI</th>
+                <th className="hide-sm">OI Δ 5m</th>
+                <th className="hide-md">OI Δ 1h</th>
+                <th className="hide-md">ATR</th>
+                <th className="hide-md">Vol Z</th>
+                <th className="hide-md">Vol 1m</th>
+                <th className="hide-md">RVOL 1m</th>
+                <th className="hide-md">Breakout 15m</th>
+                <th className="hide-md">VWAP 15m</th>
               </tr>
             </thead>
             <tbody>
@@ -101,20 +156,20 @@ export default function BybitPage() {
                   <td style={{fontWeight:600}}>{r.symbol}</td>
                   <td className={signalClass(r.signal_strength)}>{fmtSignal(r.signal_score, r.signal_strength)}</td>
                   <td>{fmt(r.last_price)}</td>
-                  <td className={pctClass(r.change_1m)}>{fmtPct(r.change_1m)}</td>
+                  <td className={pctClass(r.change_1m) + ' hide-sm'}>{fmtPct(r.change_1m)}</td>
                   <td className={pctClass(r.change_5m)}>{fmtPct(r.change_5m)}</td>
                   <td className={pctClass(r.change_15m)}>{fmtPct(r.change_15m)}</td>
-                  <td className={pctClass(r.change_60m)}>{fmtPct(r.change_60m)}</td>
-                  <td className={momentumClass(r.momentum_score)}>{fmtMomentum(r.momentum_score)}</td>
-                  <td>{fmtOI(r.open_interest)}</td>
-                  <td className={oiClass(r.oi_change_5m)}>{fmtOIPct(r.oi_change_5m)}</td>
-                  <td className={oiClass(r.oi_change_1h)}>{fmtOIPct(r.oi_change_1h)}</td>
-                  <td>{fmt(r.atr)}</td>
-                  <td>{fmt(r.vol_zscore_1m)}</td>
-                  <td>{fmt(r.vol_1m)}</td>
-                  <td>{fmt(r.rvol_1m)}</td>
-                  <td className={pctClass(r.breakout_15m)}>{fmtPct(r.breakout_15m)}</td>
-                  <td>{fmt(r.vwap_15m)}</td>
+                  <td className={pctClass(r.change_60m) + ' hide-md'}>{fmtPct(r.change_60m)}</td>
+                  <td className={momentumClass(r.momentum_score) + ' hide-md'}>{fmtMomentum(r.momentum_score)}</td>
+                  <td className={'hide-sm'}>{fmtOI(r.open_interest)}</td>
+                  <td className={oiClass(r.oi_change_5m) + ' hide-sm'}>{fmtOIPct(r.oi_change_5m)}</td>
+                  <td className={oiClass(r.oi_change_1h) + ' hide-md'}>{fmtOIPct(r.oi_change_1h)}</td>
+                  <td className={'hide-md'}>{fmt(r.atr)}</td>
+                  <td className={'hide-md'}>{fmt(r.vol_zscore_1m)}</td>
+                  <td className={'hide-md'}>{fmt(r.vol_1m)}</td>
+                  <td className={'hide-md'}>{fmt(r.rvol_1m)}</td>
+                  <td className={pctClass(r.breakout_15m) + ' hide-md'}>{fmtPct(r.breakout_15m)}</td>
+                  <td className={'hide-md'}>{fmt(r.vwap_15m)}</td>
                 </tr>
               ))}
             </tbody>

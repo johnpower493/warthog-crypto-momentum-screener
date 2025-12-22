@@ -44,8 +44,19 @@ export default function Home() {
   const [rows, setRows] = useState<Metric[]>([]);
   const binState = useRef<Map<string, Metric>>(new Map());
   const httpState = useRef<Map<string, Metric>>(new Map());
-  const [modal, setModal] = useState<{open: boolean; symbol?: string; exchange?: string; closes?: number[]}>({open:false});
+  const [modal, setModal] = useState<{
+    open: boolean;
+    row?: Metric;
+    closes?: number[];
+    loading?: boolean;
+  }>({ open: false });
   const [query, setQuery] = useState('');
+
+  // Quick filters / presets
+  const [preset, setPreset] = useState<'none' | 'gainers5m' | 'losers5m' | 'highSignal'>('none');
+  const [minSignal, setMinSignal] = useState<number | ''>('');
+  const [minAbs5m, setMinAbs5m] = useState<number | ''>('');
+
   const [sortKey, setSortKey] = useState<SortKey>('signal_score');
   const [sortDir, setSortDir] = useState<'desc'|'asc'>('desc');
   
@@ -139,9 +150,24 @@ export default function Home() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toUpperCase();
-    const base = onlyFavs ? rows.filter(r => favs.includes(idOf(r))) : rows;
-    return q ? base.filter(r => r.symbol.includes(q)) : base;
-  }, [rows, query, onlyFavs, favs]);
+    let base = onlyFavs ? rows.filter((r) => favs.includes(idOf(r))) : rows;
+
+    if (q) base = base.filter((r) => r.symbol.includes(q));
+
+    if (minSignal !== '') {
+      base = base.filter((r) => (r.signal_score ?? -Infinity) >= (minSignal as number));
+    }
+    if (minAbs5m !== '') {
+      base = base.filter((r) => Math.abs(r.change_5m ?? 0) >= (minAbs5m as number) / 100);
+    }
+
+    // Presets
+    if (preset === 'gainers5m') base = base.filter((r) => (r.change_5m ?? -Infinity) > 0);
+    if (preset === 'losers5m') base = base.filter((r) => (r.change_5m ?? Infinity) < 0);
+    if (preset === 'highSignal') base = base.filter((r) => (r.signal_score ?? -Infinity) >= 70);
+
+    return base;
+  }, [rows, query, onlyFavs, favs, preset, minSignal, minAbs5m]);
 
   const sorted = useMemo(() => {
     const cmpString = (a: string, b: string) =>
@@ -185,13 +211,19 @@ export default function Home() {
 
   const openDetails = async (r: Metric) => {
     const exchange = r.exchange || 'binance';
-    const backendBase = (process.env.NEXT_PUBLIC_BACKEND_HTTP || 'http://127.0.0.1:8000');
-    try{
-      const resp = await fetch(`${backendBase}/debug/history?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&limit=60`);
+    const backendBase = process.env.NEXT_PUBLIC_BACKEND_HTTP || 'http://127.0.0.1:8000';
+
+    // Show modal immediately with row data; load history async
+    setModal({ open: true, row: r, closes: [], loading: true });
+
+    try {
+      const resp = await fetch(
+        `${backendBase}/debug/history?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&limit=60`
+      );
       const j = await resp.json();
-      setModal({open:true, symbol:r.symbol, exchange, closes:j.closes||[]});
-    }catch(e){
-      setModal({open:true, symbol:r.symbol, exchange, closes:[]});
+      setModal((m) => ({ ...m, open: true, row: r, closes: j.closes || [], loading: false }));
+    } catch (e) {
+      setModal((m) => ({ ...m, open: true, row: r, closes: [], loading: false }));
     }
   };
 
@@ -205,6 +237,37 @@ export default function Home() {
           </div>
           <div className="group">
             <input className="input" placeholder="Search symbol (e.g. BTC)" value={query} onChange={e=>setQuery(e.target.value)} />
+
+            <div className="group" style={{ gap: 6 }}>
+              <button className={"button " + (preset==='gainers5m'?'buttonActive':'')} onClick={()=>setPreset(preset==='gainers5m'?'none':'gainers5m')}>Gainers 5m</button>
+              <button className={"button " + (preset==='losers5m'?'buttonActive':'')} onClick={()=>setPreset(preset==='losers5m'?'none':'losers5m')}>Losers 5m</button>
+              <button className={"button " + (preset==='highSignal'?'buttonActive':'')} onClick={()=>setPreset(preset==='highSignal'?'none':'highSignal')}>High Signal</button>
+              <button className="button" onClick={()=>{setPreset('none'); setMinSignal(''); setMinAbs5m('');}}>Reset</button>
+            </div>
+
+            <input
+              className="input"
+              style={{ minWidth: 120 }}
+              inputMode="numeric"
+              placeholder="Min Signal"
+              value={minSignal}
+              onChange={(e)=>{
+                const v = e.target.value.trim();
+                setMinSignal(v===''? '' : Number(v));
+              }}
+            />
+            <input
+              className="input"
+              style={{ minWidth: 140 }}
+              inputMode="numeric"
+              placeholder="Min |5m| %"
+              value={minAbs5m}
+              onChange={(e)=>{
+                const v = e.target.value.trim();
+                setMinAbs5m(v===''? '' : Number(v));
+              }}
+            />
+
             <select className="select" value={sortKey} onChange={e=>setSortKey(e.target.value as SortKey)}>
               <option value="signal_score">Sort: Signal 🔥</option>
               <option value="change_5m">Sort: 5m %</option>
@@ -324,14 +387,14 @@ export default function Home() {
                 <th className="sortable" onClick={()=>handleHeaderClick('symbol')}>
                   Symbol {sortKey==='symbol' && (sortDir==='desc'?'↓':'↑')}
                 </th>
-                <th>Exchange</th>
+                <th className="hide-xs">Exchange</th>
                 <th className="sortable" onClick={()=>handleHeaderClick('signal_score')}>
                   Signal {sortKey==='signal_score' && (sortDir==='desc'?'↓':'↑')}
                 </th>
                 <th className="sortable" onClick={()=>handleHeaderClick('last_price')}>
                   Last {sortKey==='last_price' && (sortDir==='desc'?'↓':'↑')}
                 </th>
-                <th className="sortable" onClick={()=>handleHeaderClick('change_1m')}>
+                <th className="sortable hide-sm" onClick={()=>handleHeaderClick('change_1m')}>
                   1m % {sortKey==='change_1m' && (sortDir==='desc'?'↓':'↑')}
                 </th>
                 <th className="sortable" onClick={()=>handleHeaderClick('change_5m')}>
@@ -340,32 +403,32 @@ export default function Home() {
                 <th className="sortable" onClick={()=>handleHeaderClick('change_15m')}>
                   15m % {sortKey==='change_15m' && (sortDir==='desc'?'↓':'↑')}
                 </th>
-                <th className="sortable" onClick={()=>handleHeaderClick('change_60m')}>
+                <th className="sortable hide-md" onClick={()=>handleHeaderClick('change_60m')}>
                   60m % {sortKey==='change_60m' && (sortDir==='desc'?'↓':'↑')}
                 </th>
-                <th className="sortable" onClick={()=>handleHeaderClick('momentum_score')}>
+                <th className="sortable hide-md" onClick={()=>handleHeaderClick('momentum_score')}>
                   Momentum {sortKey==='momentum_score' && (sortDir==='desc'?'↓':'↑')}
                 </th>
-                <th>Mom 5m</th>
-                <th>Mom 15m</th>
-                <th className="sortable" onClick={()=>handleHeaderClick('open_interest')}>
+                <th className="hide-md">Mom 5m</th>
+                <th className="hide-md">Mom 15m</th>
+                <th className="sortable hide-sm" onClick={()=>handleHeaderClick('open_interest')}>
                   OI {sortKey==='open_interest' && (sortDir==='desc'?'↓':'↑')}
                 </th>
-                <th className="sortable" onClick={()=>handleHeaderClick('oi_change_5m')}>
+                <th className="sortable hide-sm" onClick={()=>handleHeaderClick('oi_change_5m')}>
                   OI Δ 5m {sortKey==='oi_change_5m' && (sortDir==='desc'?'↓':'↑')}
                 </th>
-                <th>OI Δ 15m</th>
-                <th>OI Δ 1h</th>
-                <th className="sortable" onClick={()=>handleHeaderClick('atr')}>
+                <th className="hide-md">OI Δ 15m</th>
+                <th className="hide-md">OI Δ 1h</th>
+                <th className="sortable hide-md" onClick={()=>handleHeaderClick('atr')}>
                   ATR {sortKey==='atr' && (sortDir==='desc'?'↓':'↑')}
                 </th>
-                <th className="sortable" onClick={()=>handleHeaderClick('vol_zscore_1m')}>
+                <th className="sortable hide-md" onClick={()=>handleHeaderClick('vol_zscore_1m')}>
                   Vol Z {sortKey==='vol_zscore_1m' && (sortDir==='desc'?'↓':'↑')}
                 </th>
-                <th>Vol 1m</th>
-                <th>RVOL 1m</th>
-                <th>Breakout 15m</th>
-                <th>VWAP 15m</th>
+                <th className="hide-md">Vol 1m</th>
+                <th className="hide-md">RVOL 1m</th>
+                <th className="hide-md">Breakout 15m</th>
+                <th className="hide-md">VWAP 15m</th>
               </tr>
             </thead>
             <tbody>
@@ -375,26 +438,26 @@ export default function Home() {
                     <span className={"star "+(favs.includes(idOf(r))?'active':'')} onClick={(e)=>{e.stopPropagation(); toggleFav(idOf(r), favs, setFavs)}}>★</span>
                   </td>
                   <td style={{fontWeight:600}}>{r.symbol}</td>
-                  <td className="muted">{r.exchange || 'binance'}</td>
+                  <td className="muted hide-xs">{r.exchange || 'binance'}</td>
                   <td className={signalClass(r.signal_strength)}>{fmtSignal(r.signal_score, r.signal_strength)}</td>
                   <td>{fmt(r.last_price)}</td>
-                  <td className={pctClass(r.change_1m)}>{fmtPct(r.change_1m)}</td>
+                  <td className={pctClass(r.change_1m) + ' hide-sm'}>{fmtPct(r.change_1m)}</td>
                   <td className={pctClass(r.change_5m)}>{fmtPct(r.change_5m)}</td>
                   <td className={pctClass(r.change_15m)}>{fmtPct(r.change_15m)}</td>
-                  <td className={pctClass(r.change_60m)}>{fmtPct(r.change_60m)}</td>
-                  <td className={momentumClass(r.momentum_score)}>{fmtMomentum(r.momentum_score)}</td>
-                  <td className={pctClass(r.momentum_5m)}>{fmtPct(r.momentum_5m)}</td>
-                  <td className={pctClass(r.momentum_15m)}>{fmtPct(r.momentum_15m)}</td>
-                  <td>{fmtOI(r.open_interest)}</td>
-                  <td className={oiClass(r.oi_change_5m)}>{fmtOIPct(r.oi_change_5m)}</td>
-                  <td className={oiClass(r.oi_change_15m)}>{fmtOIPct(r.oi_change_15m)}</td>
-                  <td className={oiClass(r.oi_change_1h)}>{fmtOIPct(r.oi_change_1h)}</td>
-                  <td>{fmt(r.atr)}</td>
-                  <td>{fmt(r.vol_zscore_1m)}</td>
-                  <td>{fmt(r.vol_1m)}</td>
-                  <td>{fmt(r.rvol_1m)}</td>
-                  <td className={pctClass(r.breakout_15m)}>{fmtPct(r.breakout_15m)}</td>
-                  <td>{fmt(r.vwap_15m)}</td>
+                  <td className={pctClass(r.change_60m) + ' hide-md'}>{fmtPct(r.change_60m)}</td>
+                  <td className={momentumClass(r.momentum_score) + ' hide-md'}>{fmtMomentum(r.momentum_score)}</td>
+                  <td className={pctClass(r.momentum_5m) + ' hide-md'}>{fmtPct(r.momentum_5m)}</td>
+                  <td className={pctClass(r.momentum_15m) + ' hide-md'}>{fmtPct(r.momentum_15m)}</td>
+                  <td className={'hide-sm'}>{fmtOI(r.open_interest)}</td>
+                  <td className={oiClass(r.oi_change_5m) + ' hide-sm'}>{fmtOIPct(r.oi_change_5m)}</td>
+                  <td className={oiClass(r.oi_change_15m) + ' hide-md'}>{fmtOIPct(r.oi_change_15m)}</td>
+                  <td className={oiClass(r.oi_change_1h) + ' hide-md'}>{fmtOIPct(r.oi_change_1h)}</td>
+                  <td className={'hide-md'}>{fmt(r.atr)}</td>
+                  <td className={'hide-md'}>{fmt(r.vol_zscore_1m)}</td>
+                  <td className={'hide-md'}>{fmt(r.vol_1m)}</td>
+                  <td className={'hide-md'}>{fmt(r.rvol_1m)}</td>
+                  <td className={pctClass(r.breakout_15m) + ' hide-md'}>{fmtPct(r.breakout_15m)}</td>
+                  <td className={'hide-md'}>{fmt(r.vwap_15m)}</td>
                 </tr>
               ))}
             </tbody>
@@ -405,7 +468,22 @@ export default function Home() {
           <div className="muted">Last update: {lastUpdate? new Date(lastUpdate).toLocaleTimeString(): '—'}</div>
         </div>
       </div>
-      {modal.open && <DetailsModal symbol={modal.symbol!} exchange={modal.exchange!} closes={modal.closes||[]} onClose={()=>setModal({open:false})} />}
+      {modal.open && modal.row && (
+        <DetailsModal
+          row={modal.row}
+          closes={modal.closes || []}
+          loading={!!modal.loading}
+          isFav={favs.includes(idOf(modal.row))}
+          onToggleFav={() => toggleFav(idOf(modal.row!), favs, setFavs)}
+          onClose={() => setModal({ open: false })}
+          onNavigate={(dir) => {
+            const i = sorted.findIndex((x) => idOf(x) === idOf(modal.row!));
+            if (i < 0) return;
+            const next = sorted[(i + dir + sorted.length) % sorted.length];
+            openDetails(next);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -455,17 +533,152 @@ function Sparkline({data}:{data:number[]}){
   );
 }
 
-function DetailsModal({symbol, exchange, closes, onClose}:{symbol:string; exchange:string; closes:number[]; onClose:()=>void}){
+function DetailsModal({
+  row,
+  closes,
+  loading,
+  isFav,
+  onToggleFav,
+  onClose,
+  onNavigate,
+}: {
+  row: Metric;
+  closes: number[];
+  loading: boolean;
+  isFav: boolean;
+  onToggleFav: () => void;
+  onClose: () => void;
+  onNavigate: (dir: -1 | 1) => void;
+}) {
+  const exchange = row.exchange || 'binance';
+  const symbol = row.symbol;
+
+  const tvUrl = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(
+    exchange.toUpperCase() === 'BYBIT' ? `BYBIT:${symbol}` : `BINANCE:${symbol}`
+  )}`;
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+      if (e.key === 'ArrowUp' || e.key === 'k') {
+        e.preventDefault();
+        onNavigate(-1);
+        return;
+      }
+      if (e.key === 'ArrowDown' || e.key === 'j') {
+        e.preventDefault();
+        onNavigate(1);
+        return;
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose, onNavigate]);
+
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // fallback
+      const el = document.createElement('textarea');
+      el.value = text;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+    }
+  };
+
   return (
-    <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:9999}} onClick={onClose}>
-      <div className="panel" style={{width:520}} onClick={(e)=>e.stopPropagation()}>
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.6)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 9999,
+      }}
+      onClick={onClose}
+    >
+      <div className="panel" style={{ width: 720, maxWidth: '95vw' }} onClick={(e) => e.stopPropagation()}>
         <div className="toolbar">
-          <div className="group"><span className="badge">{exchange}</span><strong style={{marginLeft:8}}>{symbol}</strong></div>
-          <button className="button" onClick={onClose}>Close</button>
+          <div className="group" style={{ gap: 10, alignItems: 'center' }}>
+            <span className="badge">{exchange}</span>
+            <strong style={{ fontSize: 16 }}>{symbol}</strong>
+            <span className={"star " + (isFav ? 'active' : '')} onClick={onToggleFav} title="Toggle favorite">
+              ★
+            </span>
+            <span className="badge">Signal: {fmtSignal(row.signal_score, row.signal_strength)}</span>
+          </div>
+          <div className="group">
+            <button className="button" onClick={() => onNavigate(-1)} title="Previous (↑)">
+              Prev
+            </button>
+            <button className="button" onClick={() => onNavigate(1)} title="Next (↓)">
+              Next
+            </button>
+            <button className="button" onClick={() => copy(symbol)} title="Copy symbol">
+              Copy
+            </button>
+            <a className="button" href={tvUrl} target="_blank" rel="noreferrer" title="Open in TradingView">
+              TradingView
+            </a>
+            <button className="button" onClick={onClose}>
+              Close
+            </button>
+          </div>
         </div>
-        <div style={{padding:12}}>
-          <Sparkline data={closes||[]} />
+
+        <div style={{ padding: 12, display: 'grid', gridTemplateColumns: '260px 1fr', gap: 12 }}>
+          <div>
+            <div className="badge" style={{ display: 'inline-block', marginBottom: 8 }}>
+              Last: {fmt(row.last_price)}
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <Stat label="1m" value={fmtPct(row.change_1m)} className={pctClass(row.change_1m)} />
+              <Stat label="5m" value={fmtPct(row.change_5m)} className={pctClass(row.change_5m)} />
+              <Stat label="15m" value={fmtPct(row.change_15m)} className={pctClass(row.change_15m)} />
+              <Stat label="60m" value={fmtPct(row.change_60m)} className={pctClass(row.change_60m)} />
+              <Stat label="ATR" value={fmt(row.atr)} className="muted" />
+              <Stat label="Vol Z" value={fmt(row.vol_zscore_1m)} className="muted" />
+              <Stat label="Momentum" value={fmtMomentum(row.momentum_score)} className={momentumClass(row.momentum_score)} />
+              <Stat label="OI" value={fmtOI(row.open_interest)} className="muted" />
+              <Stat label="OI Δ 5m" value={fmtOIPct(row.oi_change_5m)} className={oiClass(row.oi_change_5m)} />
+              <Stat label="OI Δ 15m" value={fmtOIPct(row.oi_change_15m)} className={oiClass(row.oi_change_15m)} />
+            </div>
+
+            <div className="muted" style={{ marginTop: 10, fontSize: 12 }}>
+              Tip: use ↑ / ↓ to navigate, Esc to close.
+            </div>
+          </div>
+
+          <div>
+            <div className="muted" style={{ marginBottom: 6 }}>
+              Last 60 x 1m closes {loading ? '(loading...)' : ''}
+            </div>
+            <Sparkline data={closes || []} />
+          </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value, className }: { label: string; value: string; className?: string }) {
+  return (
+    <div style={{ border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 10 }}>
+      <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+        {label}
+      </div>
+      <div className={className} style={{ fontSize: 14, fontWeight: 600 }}>
+        {value}
       </div>
     </div>
   );
