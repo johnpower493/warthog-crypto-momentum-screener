@@ -20,6 +20,9 @@ class SymbolMetrics(BaseModel):
     symbol: str
     exchange: str
     last_price: float
+    # Scalping impulse
+    impulse_score: Optional[float] = None  # 0..100 (higher = more impulsive)
+    impulse_dir: Optional[int] = None  # -1, 0, +1 direction based on 1m change
     # Returns
     change_1m: Optional[float] = None
     change_5m: Optional[float] = None

@@ -26,6 +26,9 @@ type Metric = {
   momentum_5m?: number | null;
   momentum_15m?: number | null;
   momentum_score?: number | null;
+  // Scalping impulse
+  impulse_score?: number | null;
+  impulse_dir?: number | null;
   // Combined signal
   signal_score?: number | null;
   signal_strength?: string | null;
@@ -51,6 +54,7 @@ type SortKey =
   | 'oi_change_5m'
   | 'open_interest'
   | 'signal_score'
+  | 'impulse_score'
   | 'breakout_15m'
   | 'vwap_15m';
 
@@ -68,7 +72,14 @@ export default function Home() {
 
   // Quick filters / presets
   const [preset, setPreset] = useState<
-    'none' | 'gainers5m' | 'losers5m' | 'highSignal' | 'volatile5m' | 'highOiDelta5m' | 'breakout15m'
+    | 'none'
+    | 'gainers5m'
+    | 'losers5m'
+    | 'volatile5m'
+    | 'highOiDelta5m'
+    | 'breakout15m'
+    | 'highSignal'
+    | 'impulse'
   >('none');
   const [minSignal, setMinSignal] = useState<number | ''>('');
   const [minAbs5m, setMinAbs5m] = useState<number | ''>('');
@@ -181,6 +192,7 @@ export default function Home() {
     if (preset === 'gainers5m') base = base.filter((r) => (r.change_5m ?? -Infinity) > 0);
     if (preset === 'losers5m') base = base.filter((r) => (r.change_5m ?? Infinity) < 0);
     if (preset === 'highSignal') base = base.filter((r) => (r.signal_score ?? -Infinity) >= 70);
+    if (preset === 'impulse') base = base.filter((r) => (r.impulse_score ?? 0) >= 60);
     if (preset === 'volatile5m') base = base.filter((r) => Math.abs(r.change_5m ?? 0) > 0);
     if (preset === 'highOiDelta5m') base = base.filter((r) => Math.abs(r.oi_change_5m ?? 0) > 0);
     if (preset === 'breakout15m') base = base.filter((r) => (r.breakout_15m ?? 0) > 0);
@@ -302,6 +314,13 @@ export default function Home() {
                 Breakout 15m
               </button>
               <button
+                className={"button " + (preset==='impulse'?'buttonActive':'')}
+                onClick={()=>{ setPreset(preset==='impulse'?'none':'impulse'); setSortKey('impulse_score'); setSortDir('desc'); }}
+                title="Scalping impulse score (move + vol activity)"
+              >
+                Impulse
+              </button>
+              <button
                 className={"button " + (preset==='highSignal'?'buttonActive':'')}
                 onClick={()=>{ setPreset(preset==='highSignal'?'none':'highSignal'); setSortKey('signal_score'); setSortDir('desc'); }}
               >
@@ -335,6 +354,7 @@ export default function Home() {
 
             <select className="select" value={sortKey} onChange={e=>setSortKey(e.target.value as SortKey)}>
               <option value="signal_score">Sort: Signal 🔥</option>
+              <option value="impulse_score">Sort: Impulse</option>
               <option value="change_5m">Sort: 5m %</option>
               <option value="change_15m">Sort: 15m %</option>
               <option value="momentum_score">Sort: Momentum</option>
@@ -456,6 +476,9 @@ export default function Home() {
                 <th className="sortable" onClick={()=>handleHeaderClick('signal_score')}>
                   Signal {sortKey==='signal_score' && (sortDir==='desc'?'↓':'↑')}
                 </th>
+                <th className="sortable hide-sm" onClick={()=>handleHeaderClick('impulse_score')}>
+                  Impulse {sortKey==='impulse_score' && (sortDir==='desc'?'↓':'↑')}
+                </th>
                 <th className="sortable" onClick={()=>handleHeaderClick('last_price')}>
                   Last {sortKey==='last_price' && (sortDir==='desc'?'↓':'↑')}
                 </th>
@@ -505,6 +528,7 @@ export default function Home() {
                   <td style={{fontWeight:600}}>{r.symbol}</td>
                   <td className="muted hide-xs">{r.exchange || 'binance'}</td>
                   <td className={signalClass(r.signal_strength)}>{fmtSignal(r.signal_score, r.signal_strength)}</td>
+                  <td className={'hide-sm'}>{fmtImpulse(r.impulse_score, r.impulse_dir)}</td>
                   <td>{fmt(r.last_price)}</td>
                   <td className={pctClass(r.change_1m) + ' hide-sm'}>{fmtPct(r.change_1m)}</td>
                   <td className={pctClass(r.change_5m)}>{fmtPct(r.change_5m)}</td>
@@ -805,6 +829,12 @@ function signalClass(strength?: string | null) {
     case 'strong_bear': return 'signalStrongBear';
     default: return 'muted';
   }
+}
+
+function fmtImpulse(score?: number | null, dir?: number | null){
+  if (score === undefined || score === null || Number.isNaN(score)) return '-';
+  const arrow = dir === 1 ? '↑' : dir === -1 ? '↓' : '';
+  return `${arrow}${score.toFixed(0)}`;
 }
 
 function fmtSignal(score?: number | null, strength?: string | null) {

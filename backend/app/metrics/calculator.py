@@ -65,6 +65,15 @@ class SymbolState:
         mom_15m = momentum_with_current(self.close_1m.values, WINDOW_MEDIUM, current_price)
         mom_score = momentum_score_with_current(self.close_1m.values, current_price)
         
+        # Impulse score (useful for scalping screens)
+        # Goal: surface symbols with unusually large *current* movement + activity.
+        impulse_sc, impulse_dir = calculate_impulse_score(
+            change_1m=ch_1,
+            vol_zscore=vol_z,
+            rvol=rvol,
+            momentum_score=mom_score,
+        )
+
         # Combined signal score
         signal_sc, signal_str = calculate_signal_score(
             momentum_score=mom_score,
@@ -78,6 +87,8 @@ class SymbolState:
             symbol=self.symbol,
             exchange=self.exchange,
             last_price=self.last_price or 0.0,
+            impulse_score=impulse_sc,
+            impulse_dir=impulse_dir,
             change_1m=ch_1,
             change_5m=ch_5,
             change_15m=ch_15,
@@ -331,6 +342,69 @@ def momentum_score_with_current(closes, current_price: float) -> Optional[float]
         return score / total_weight
     except Exception:
         return None
+
+def calculate_impulse_score(
+    change_1m: Optional[float],
+    vol_zscore: Optional[float],
+    rvol: Optional[float],
+    momentum_score: Optional[float],
+) -> tuple[Optional[float], Optional[int]]:
+    """Compute a 0..100 impulse score.
+
+    This is designed for scalpers to find symbols that are *moving now* with
+    unusual activity.
+
+    Inputs:
+    - change_1m: fractional return (e.g. 0.002 for +0.2%)
+    - vol_zscore: z-score of absolute return vs recent lookback
+    - rvol: relative volume ratio (1m vol / avg 1m vol)
+    - momentum_score: -100..+100 composite momentum
+
+    Returns: (score, dir)
+    - score: 0..100
+    - dir: -1/0/+1 (based on sign of change_1m)
+    """
+    try:
+        if change_1m is None and vol_zscore is None and rvol is None and momentum_score is None:
+            return None, None
+
+        # Direction
+        dir_ = 0
+        if change_1m is not None:
+            if change_1m > 0:
+                dir_ = 1
+            elif change_1m < 0:
+                dir_ = -1
+
+        # Component 1: magnitude of 1m move (cap around ~0.75% for perps)
+        # change_1m is fractional; convert to abs percent
+        mag_pct = abs(change_1m) * 100 if change_1m is not None else 0.0
+        mag_score = min(1.0, mag_pct / 0.75)  # 0..1
+
+        # Component 2: vol z-score of abs return (cap at z=5)
+        z = max(0.0, float(vol_zscore)) if vol_zscore is not None else 0.0
+        z_score = min(1.0, z / 5.0)
+
+        # Component 3: relative volume (cap at rvol=3)
+        rv = max(0.0, float(rvol)) if rvol is not None else 0.0
+        rv_score = min(1.0, rv / 3.0)
+
+        # Component 4: momentum confirmation (use absolute momentum)
+        mom = abs(float(momentum_score)) if momentum_score is not None else 0.0
+        mom_score = min(1.0, mom / 100.0)
+
+        # Weighted blend (tuned for "moving now" feel)
+        # - move magnitude is most important
+        # - vol z-score and rvol confirm abnormal activity
+        # - momentum adds persistence
+        w_mag, w_z, w_rv, w_mom = 0.45, 0.25, 0.20, 0.10
+        raw = w_mag * mag_score + w_z * z_score + w_rv * rv_score + w_mom * mom_score
+
+        score = max(0.0, min(100.0, raw * 100.0))
+        return score, dir_
+    except Exception:
+        return None, None
+
 
 def calculate_signal_score(
     momentum_score: Optional[float],
