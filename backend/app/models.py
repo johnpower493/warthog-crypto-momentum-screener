@@ -20,6 +20,13 @@ class SymbolMetrics(BaseModel):
     symbol: str
     exchange: str
     last_price: float
+
+    # Cipher B (WaveTrend) core fields
+    wt1: Optional[float] = None
+    wt2: Optional[float] = None
+    cipher_buy: Optional[bool] = None   # WT cross up while oversold
+    cipher_sell: Optional[bool] = None  # WT cross down while overbought
+
     # Scalping impulse
     impulse_score: Optional[float] = None  # 0..100 (higher = more impulsive)
     impulse_dir: Optional[int] = None  # -1, 0, +1 direction based on 1m change

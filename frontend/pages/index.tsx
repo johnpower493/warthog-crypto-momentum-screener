@@ -26,6 +26,12 @@ type Metric = {
   momentum_5m?: number | null;
   momentum_15m?: number | null;
   momentum_score?: number | null;
+  // Cipher B (WaveTrend)
+  wt1?: number | null;
+  wt2?: number | null;
+  cipher_buy?: boolean | null;
+  cipher_sell?: boolean | null;
+
   // Scalping impulse
   impulse_score?: number | null;
   impulse_dir?: number | null;
@@ -80,6 +86,8 @@ export default function Home() {
     | 'breakout15m'
     | 'highSignal'
     | 'impulse'
+    | 'cipherBuy'
+    | 'cipherSell'
   >('none');
   // (Removed) manual numeric threshold inputs. If you'd like these back later,
   // we can reintroduce them with validation.
@@ -264,6 +272,8 @@ export default function Home() {
     if (preset === 'volatile5m') base = base.filter((r) => Math.abs(r.change_5m ?? 0) > 0);
     if (preset === 'highOiDelta5m') base = base.filter((r) => Math.abs(r.oi_change_5m ?? 0) > 0);
     if (preset === 'breakout15m') base = base.filter((r) => (r.breakout_15m ?? 0) > 0);
+    if (preset === 'cipherBuy') base = base.filter((r) => r.cipher_buy);
+    if (preset === 'cipherSell') base = base.filter((r) => r.cipher_sell);
 
     return base;
   }, [rows, query, onlyFavs, favs, preset]);
@@ -393,6 +403,20 @@ export default function Home() {
                 onClick={()=>{ setPreset(preset==='highSignal'?'none':'highSignal'); setSortKey('signal_score'); setSortDir('desc'); }}
               >
                 High Signal
+              </button>
+              <button
+                className={"button " + (preset==='cipherBuy'?'buttonActive':'')}
+                onClick={()=>{ setPreset(preset==='cipherBuy'?'none':'cipherBuy'); }}
+                title="Cipher B: WT cross up while oversold"
+              >
+                Cipher Buy
+              </button>
+              <button
+                className={"button " + (preset==='cipherSell'?'buttonActive':'')}
+                onClick={()=>{ setPreset(preset==='cipherSell'?'none':'cipherSell'); }}
+                title="Cipher B: WT cross down while overbought"
+              >
+                Cipher Sell
               </button>
               <button className="button" onClick={()=>{setPreset('none');}}>Reset</button>
             </div>

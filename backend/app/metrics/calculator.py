@@ -64,6 +64,24 @@ class SymbolState:
         mom_5m = momentum_with_current(self.close_1m.values, WINDOW_SHORT, current_price)
         mom_15m = momentum_with_current(self.close_1m.values, WINDOW_MEDIUM, current_price)
         mom_score = momentum_score_with_current(self.close_1m.values, current_price)
+
+        # Cipher B WaveTrend (WT1/WT2) + core buy/sell dots
+        wt1, wt2, wt1_prev, wt2_prev = wavetrend(
+            self.close_1m.values,
+            self.high_1m.values,
+            self.low_1m.values,
+            chlen=9,
+            avg=12,
+            malen=3,
+        )
+        cipher_buy, cipher_sell = cipher_b_signals(
+            wt1,
+            wt2,
+            wt1_prev,
+            wt2_prev,
+            os_level=-53.0,
+            ob_level=53.0,
+        )
         
         # Impulse score (useful for scalping screens)
         # Goal: surface symbols with unusually large *current* movement + activity.
@@ -87,6 +105,10 @@ class SymbolState:
             symbol=self.symbol,
             exchange=self.exchange,
             last_price=self.last_price or 0.0,
+            wt1=wt1,
+            wt2=wt2,
+            cipher_buy=cipher_buy,
+            cipher_sell=cipher_sell,
             impulse_score=impulse_sc,
             impulse_dir=impulse_dir,
             change_1m=ch_1,
@@ -112,6 +134,124 @@ class SymbolState:
             signal_score=signal_sc,
             signal_strength=signal_str,
         )
+
+def _ema_series(values: list[float], length: int) -> list[float]:
+    """EMA series (TradingView-style) over a list of values."""
+    if length <= 0:
+        return values
+    if not values:
+        return []
+    alpha = 2.0 / (length + 1.0)
+    out: list[float] = [values[0]]
+    for v in values[1:]:
+        out.append(out[-1] + alpha * (v - out[-1]))
+    return out
+
+
+def _sma_last(values: list[float], length: int) -> Optional[float]:
+    if length <= 0:
+        return None
+    if len(values) < length:
+        return None
+    return sum(values[-length:]) / length
+
+
+def wavetrend(
+    closes: Deque[float],
+    highs: Deque[float],
+    lows: Deque[float],
+    chlen: int = 9,
+    avg: int = 12,
+    malen: int = 3,
+) -> tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
+    """Compute Cipher B/LazyBear WaveTrend wt1/wt2.
+
+    Pine reference (from cipher_b.txt):
+      esa = ema(hlc3, chlen)
+      de  = ema(abs(hlc3 - esa), chlen)
+      ci  = (hlc3 - esa) / (0.015 * de)
+      wt1 = ema(ci, avg)
+      wt2 = sma(wt1, malen)
+
+    We compute this on the 1m series locally (no higher timeframe security()).
+    """
+    if len(closes) < max(chlen + 2, avg + 2, malen + 2):
+        return None, None
+
+    # hlc3
+    c = list(closes)
+    h = list(highs)
+    l = list(lows)
+    n = min(len(c), len(h), len(l))
+    c = c[-n:]
+    h = h[-n:]
+    l = l[-n:]
+    hlc3 = [(h[i] + l[i] + c[i]) / 3.0 for i in range(n)]
+
+    esa = _ema_series(hlc3, chlen)
+    de_src = [abs(hlc3[i] - esa[i]) for i in range(n)]
+    de = _ema_series(de_src, chlen)
+
+    ci: list[float] = []
+    for i in range(n):
+        denom = 0.015 * de[i]
+        ci.append((hlc3[i] - esa[i]) / denom if denom != 0 else 0.0)
+
+    wt1_series = _ema_series(ci, avg)
+    if len(wt1_series) < malen + 2:
+        return None, None, None, None
+
+    wt1_last = wt1_series[-1]
+    wt1_prev = wt1_series[-2]
+
+    # wt2 is SMA of wt1
+    wt2_last = _sma_last(wt1_series, malen)
+    wt2_prev = _sma_last(wt1_series[:-1], malen)
+
+    return wt1_last, wt2_last, wt1_prev, wt2_prev
+
+
+def cipher_b_signals(
+    wt1: Optional[float],
+    wt2: Optional[float],
+    wt1_prev: Optional[float],
+    wt2_prev: Optional[float],
+    os_level: float = -53.0,
+    ob_level: float = 53.0,
+) -> tuple[Optional[bool], Optional[bool]]:
+    """Core Cipher B signals requested:
+
+    A) buySignal = wtCross and wtCrossUp and wtOversold
+    B) sellSignal = wtCross and wtCrossDown and wtOverbought
+
+    We approximate `wtCross` using the latest difference sign; for exact cross
+    detection we would need wt1/wt2 history. For screening, we instead expose
+    conditions based on current wt1/wt2 relative position.
+
+    If you want exact "cross just happened this candle" semantics, we can extend
+    to compute and store wt1/wt2 series.
+    """
+    if wt1 is None or wt2 is None or wt1_prev is None or wt2_prev is None:
+        return None, None
+
+    oversold = wt2 <= os_level
+    overbought = wt2 >= ob_level
+
+    # Pine:
+    #   wtCross = cross(wt1, wt2)
+    #   wtCrossUp = wt2 - wt1 <= 0
+    #   wtCrossDown = wt2 - wt1 >= 0
+    # Together with wtCross this effectively means:
+    #   cross up   when prev(wt1-wt2) < 0 and curr(wt1-wt2) >= 0
+    #   cross down when prev(wt1-wt2) > 0 and curr(wt1-wt2) <= 0
+    prev_diff = wt1_prev - wt2_prev
+    curr_diff = wt1 - wt2
+
+    cross_up = prev_diff < 0 and curr_diff >= 0
+    cross_down = prev_diff > 0 and curr_diff <= 0
+
+    return (oversold and cross_up), (overbought and cross_down)
+
 
 def pct_change(values, window: int) -> Optional[float]:
     if len(values) <= window:
