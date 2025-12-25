@@ -4,6 +4,9 @@ type Metric = {
   symbol: string;
   exchange: string;
   last_price: number;
+  // Explainable Cipher B fields (from backend)
+  cipher_source_tf?: string | null;
+  cipher_reason?: string | null;
   change_1m?: number | null;
   change_5m?: number | null;
   change_15m?: number | null;
@@ -66,6 +69,8 @@ type SortKey =
 
 export default function Home() {
   const [rows, setRows] = useState<Metric[]>([]);
+  const [showAlerts, setShowAlerts] = useState<boolean>(false);
+  const [alertLog, setAlertLog] = useState<{ts:number; text:string}[]>([]);
   const binState = useRef<Map<string, Metric>>(new Map());
   const httpState = useRef<Map<string, Metric>>(new Map());
   const [modal, setModal] = useState<{
@@ -218,6 +223,17 @@ export default function Home() {
               const s = snap as Snapshot;
               setRows(s.metrics);
               setLastUpdate(Date.now());
+              // Append any fresh cipher signals to alert log
+              const newAlerts: {ts:number; text:string}[] = [];
+              for (const m of s.metrics) {
+                if (m && (m.cipher_buy === true || m.cipher_sell === true)) {
+                  const side = m.cipher_buy ? 'BUY' : 'SELL';
+                  const tf = m.cipher_source_tf ? `[${m.cipher_source_tf}]` : '';
+                  const reason = m.cipher_reason ? `\n${m.cipher_reason}` : '';
+                  newAlerts.push({ ts: Date.now(), text: `${side} ${tf} ${(m.exchange||'binance')} ${m.symbol} @ ${m.last_price}${reason}`});
+                }
+              }
+              if (newAlerts.length>0) setAlertLog(prev => [...newAlerts, ...prev].slice(0, 200));
             } catch {}
           };
 
@@ -457,6 +473,9 @@ export default function Home() {
             <button className="button" onClick={()=>setOnlyFavs(v=>!v)}>
               {onlyFavs ? 'All' : 'Only Favs'}
             </button>
+            <button className={"button "+(showAlerts? 'buttonActive':'')} onClick={()=>setShowAlerts(v=>!v)} title="Toggle Alert Log">
+              Alerts
+            </button>
           </div>
         </div>
 
@@ -647,6 +666,29 @@ export default function Home() {
           <div className="muted">Last update: {lastUpdate? new Date(lastUpdate).toLocaleTimeString(): '—'}</div>
         </div>
       </div>
+
+      {/* Rolling Alert Log (optional UI) */}
+      {showAlerts && (
+        <div className="panel" style={{position:'fixed', right: 12, bottom: 12, width: 420, maxWidth: '95vw', maxHeight: '45vh', overflowY:'auto', zIndex: 9999}}>
+          <div className="toolbar" style={{justifyContent:'space-between'}}>
+            <div className="group"><h3 style={{margin:0}}>Alerts</h3></div>
+            <div className="group" style={{gap:8}}>
+              <button className="button" onClick={()=>setAlertLog([])}>Clear</button>
+              <button className="button" onClick={()=>setShowAlerts(false)}>Hide</button>
+            </div>
+          </div>
+          <div style={{padding:12}}>
+            {alertLog.length===0 && <div className="muted">No alerts yet.</div>}
+            {alertLog.map((a, idx)=> (
+              <div key={idx} className="card" style={{marginBottom:8, padding:8}}>
+                <div className="muted" style={{fontSize:12}}>{new Date(a.ts).toLocaleTimeString()}</div>
+                <pre style={{whiteSpace:'pre-wrap'}}>{a.text}</pre>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {modal.open && modal.row && (
         <DetailsModal
           row={modal.row}

@@ -9,6 +9,12 @@ from ..services.redis_client import publish_json
 
 class Aggregator:
     def __init__(self, exchange: str):
+        # initialize OHLC store
+        try:
+            from .ohlc_store import init_db
+            init_db()
+        except Exception:
+            pass
         self.exchange = exchange
         self._states: Dict[str, SymbolState] = {}
         # Per-symbol last update timestamps (epoch ms)
@@ -79,9 +85,17 @@ class Aggregator:
         await self._emit_snapshot()
 
     async def _emit_snapshot(self):
-        payload = self._build_snapshot_payload()
+        # Build snapshot object (for alerts) and payload
+        snap = self.build_snapshot()
+        payload = snap.model_dump_json()
         try:
             self.last_emit_ts = int(__import__('time').time()*1000)
+        except Exception:
+            pass
+        # Fire alerts (non-blocking best-effort)
+        try:
+            from .alerter import process_metrics
+            await process_metrics(snap.metrics)
         except Exception:
             pass
         # fan out to subscribers (non-blocking)
@@ -151,6 +165,29 @@ class Aggregator:
             return []
         vals = list(st.close_1m.values)
         return vals[-limit:]
+
+    def seed_htf_from_db(self, symbol: str):
+        """Reload 15m/4h series for a symbol from the OHLC store"""
+        st = self._states.get(symbol)
+        if not st:
+            return
+        try:
+            from ..services.ohlc_store import get_recent
+            for tf in ['15m', '4h']:
+                rows = get_recent(st.exchange, symbol, tf, limit=300)
+                # Clear existing HTF series
+                st._htf[tf]['close'] = type(st._htf[tf]['close'])(maxlen=st._htf[tf]['close'].values.maxlen)  # type: ignore
+                st._htf[tf]['high'] = type(st._htf[tf]['high'])(maxlen=st._htf[tf]['high'].values.maxlen)    # type: ignore
+                st._htf[tf]['low'] = type(st._htf[tf]['low'])(maxlen=st._htf[tf]['low'].values.maxlen)      # type: ignore
+                st._htf[tf]['vol'] = type(st._htf[tf]['vol'])(maxlen=st._htf[tf]['vol'].values.maxlen)      # type: ignore
+                st._htf[tf]['current'] = None
+                for (ot, ct, o, h, l, c, v) in rows:
+                    st._htf[tf]['close'].append(c)
+                    st._htf[tf]['high'].append(h)
+                    st._htf[tf]['low'].append(l)
+                    st._htf[tf]['vol'].append(v)
+        except Exception:
+            pass
 
     async def update_ticker(self, symbol: str, price: float, ts_ms: int | None = None):
         state = self._states.get(symbol)

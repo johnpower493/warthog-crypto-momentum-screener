@@ -28,6 +28,10 @@ WS_PING_INTERVAL = float(os.getenv("WS_PING_INTERVAL", "15"))
 SNAPSHOT_INTERVAL_MS = int(os.getenv("SNAPSHOT_INTERVAL_MS", "30000"))  # throttle aggregator emits (30 seconds)
 WS_HEARTBEAT_SEC = float(os.getenv("WS_HEARTBEAT_SEC", "30"))  # periodic WS snapshot sender (30 seconds)
 
+# Cipher B thresholds (relaxed to increase frequency)
+CIPHERB_OS_LEVEL = float(os.getenv("CIPHERB_OS_LEVEL", "-40"))
+CIPHERB_OB_LEVEL = float(os.getenv("CIPHERB_OB_LEVEL", "40"))
+
 # Optional periodic "full refresh" (restart streams + backfill + refetch OI) aligned to 5m boundaries
 ENABLE_FULL_REFRESH_5M = os.getenv("ENABLE_FULL_REFRESH_5M", "false").lower() in {"1", "true", "yes"}
 FULL_REFRESH_BACKFILL_LIMIT = int(os.getenv("FULL_REFRESH_BACKFILL_LIMIT", "200"))
@@ -45,3 +49,12 @@ BYBIT_WS_LINEAR = os.getenv("BYBIT_WS_LINEAR", "wss://stream.bybit.com/v5/public
 # Symbols allow/deny lists (optional)
 INCLUDE_SYMBOLS: List[str] = [s.strip().upper() for s in os.getenv("INCLUDE_SYMBOLS", "").split(",") if s.strip()]
 EXCLUDE_SYMBOLS: List[str] = [s.strip().upper() for s in os.getenv("EXCLUDE_SYMBOLS", "").split(",") if s.strip()]
+
+# Alerting configuration
+ENABLE_ALERTS = os.getenv("ENABLE_ALERTS", "false").lower() in {"1", "true", "yes"}
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
+ALERT_DEDUP_MIN_MS = int(os.getenv("ALERT_DEDUP_MIN_MS", "60000"))  # 1 minute default
+ALERT_COOLDOWN_PER_SYMBOL_MS = int(os.getenv("ALERT_COOLDOWN_PER_SYMBOL_MS", "300000"))  # 5 min per symbol
+ALERT_INCLUDE_EXPLANATION = os.getenv("ALERT_INCLUDE_EXPLANATION", "true").lower() in {"1","true","yes"}

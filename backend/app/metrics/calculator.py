@@ -4,7 +4,7 @@ from typing import Deque, Dict, Optional
 import math
 
 from ..models import Kline, SymbolMetrics
-from ..config import WINDOW_SHORT, WINDOW_MEDIUM, ATR_PERIOD, VOL_LOOKBACK
+from ..config import WINDOW_SHORT, WINDOW_MEDIUM, ATR_PERIOD, VOL_LOOKBACK, CIPHERB_OS_LEVEL, CIPHERB_OB_LEVEL
 
 class RollingSeries:
     def __init__(self, maxlen: int):
@@ -30,7 +30,85 @@ class SymbolState:
         self.atr: Optional[float] = None
         self.open_interest: Optional[float] = None
 
+        # Higher timeframe rolling series (closed candles only)
+        maxlen_htf = 400
+        self._htf = {
+            '15m': {
+                'interval_ms': 15 * 60_000,
+                'current': None,  # type: ignore
+                'close': RollingSeries(maxlen=maxlen_htf),
+                'high': RollingSeries(maxlen=maxlen_htf),
+                'low': RollingSeries(maxlen=maxlen_htf),
+                'vol': RollingSeries(maxlen=maxlen_htf),
+            },
+            '4h': {
+                'interval_ms': 240 * 60_000,
+                'current': None,  # type: ignore
+                'close': RollingSeries(maxlen=maxlen_htf),
+                'high': RollingSeries(maxlen=maxlen_htf),
+                'low': RollingSeries(maxlen=maxlen_htf),
+                'vol': RollingSeries(maxlen=maxlen_htf),
+            }
+        }
+        # Seed from DB if available
+        try:
+            from ..services.ohlc_store import get_recent
+            for tf in ['15m', '4h']:
+                rows = get_recent(self.exchange, self.symbol, tf, limit=300)
+                for (ot, ct, o, h, l, c, v) in rows:
+                    self._htf[tf]['close'].append(c)
+                    self._htf[tf]['high'].append(h)
+                    self._htf[tf]['low'].append(l)
+                    self._htf[tf]['vol'].append(v)
+        except Exception:
+            pass
+
+    def _resample_htf(self, k: Kline):
+        # Only resample on closed 1m candles to avoid intrabar noise
+        if not getattr(k, 'closed', True):
+            return
+        # Update 15m and 4h aggregations using incoming 1m closed candle
+        for tf in ['15m', '4h']:
+            cfg = self._htf[tf]
+            interval_ms = cfg['interval_ms']
+            bucket_open = k.open_time - (k.open_time % interval_ms)
+            cur = cfg['current']
+            if cur is None or cur['open_time'] != bucket_open:
+                # finalize previous if exists
+                if cur is not None:
+                    # append to rolling series and persist
+                    cfg['close'].append(cur['close'])
+                    cfg['high'].append(cur['high'])
+                    cfg['low'].append(cur['low'])
+                    cfg['vol'].append(cur['volume'])
+                    try:
+                        from ..services.ohlc_store import upsert_candle
+                        upsert_candle(
+                            self.exchange, self.symbol, tf,
+                            cur['open_time'], cur['close_time'],
+                            cur['open'], cur['high'], cur['low'], cur['close'], cur['volume']
+                        )
+                    except Exception:
+                        pass
+                # start new
+                cfg['current'] = {
+                    'open_time': bucket_open,
+                    'close_time': bucket_open + interval_ms,
+                    'open': k.open,
+                    'high': k.high,
+                    'low': k.low,
+                    'close': k.close,
+                    'volume': k.volume,
+                }
+            else:
+                # update existing bucket
+                cur['high'] = max(cur['high'], k.high)
+                cur['low'] = min(cur['low'], k.low)
+                cur['close'] = k.close
+                cur['volume'] += k.volume
+
     def update(self, k: Kline):
+        # 1m series
         self.close_1m.append(k.close)
         self.high_1m.append(k.high)
         self.low_1m.append(k.low)
@@ -38,6 +116,11 @@ class SymbolState:
         self.last_price = k.close
         if len(self.close_1m.values) >= ATR_PERIOD+1:
             self.atr = compute_atr(list(self.high_1m.values), list(self.low_1m.values), list(self.close_1m.values))
+        # update higher timeframe resamplers
+        try:
+            self._resample_htf(k)
+        except Exception:
+            pass
 
     def compute_metrics(self) -> SymbolMetrics:
         # Use last_price for real-time changes if available, otherwise use close_1m
@@ -65,8 +148,9 @@ class SymbolState:
         mom_15m = momentum_with_current(self.close_1m.values, WINDOW_MEDIUM, current_price)
         mom_score = momentum_score_with_current(self.close_1m.values, current_price)
 
-        # Cipher B WaveTrend (WT1/WT2) + core buy/sell dots
-        wt1, wt2, wt1_prev, wt2_prev = wavetrend(
+        # Cipher B WaveTrend
+        # 1m WT is kept for reference/visualization, but buy/sell uses higher TF confirmation
+        wt1_1m, wt2_1m, wt1_prev_1m, wt2_prev_1m = wavetrend(
             self.close_1m.values,
             self.high_1m.values,
             self.low_1m.values,
@@ -74,14 +158,50 @@ class SymbolState:
             avg=12,
             malen=3,
         )
-        cipher_buy, cipher_sell = cipher_b_signals(
-            wt1,
-            wt2,
-            wt1_prev,
-            wt2_prev,
-            os_level=-53.0,
-            ob_level=53.0,
+
+        # Compute HTF WT on closed candles only (15m and 4h)
+        wt15 = wavetrend(
+            self._htf['15m']['close'].values,
+            self._htf['15m']['high'].values,
+            self._htf['15m']['low'].values,
+            chlen=9, avg=12, malen=3,
         )
+        wt4h = wavetrend(
+            self._htf['4h']['close'].values,
+            self._htf['4h']['high'].values,
+            self._htf['4h']['low'].values,
+            chlen=9, avg=12, malen=3,
+        )
+        def _signals_from_tuple(wt_tuple: tuple[Optional[float],Optional[float],Optional[float],Optional[float]]):
+            if not wt_tuple or len(wt_tuple) != 4:
+                return (None, None)
+            return cipher_b_signals(
+                wt_tuple[0], wt_tuple[1], wt_tuple[2], wt_tuple[3],
+                os_level=CIPHERB_OS_LEVEL, ob_level=CIPHERB_OB_LEVEL,
+            )
+        buy15, sell15 = _signals_from_tuple(wt15)
+        buy4h, sell4h = _signals_from_tuple(wt4h)
+        # EITHER policy: trigger if 15m OR 4h has a fresh cross at close
+        cipher_buy = True if ((buy15 is True) or (buy4h is True)) else (False if ((buy15 is False) and (buy4h is False)) else None)
+        cipher_sell = True if ((sell15 is True) or (sell4h is True)) else (False if ((sell15 is False) and (sell4h is False)) else None)
+
+        # Explainability: which TF triggered and why
+        cipher_source_tf = None
+        cipher_reason = None
+        if cipher_buy is True:
+            tf = '15m' if buy15 else ('4h' if buy4h else None)
+            cipher_source_tf = tf
+            if tf == '15m' and wt15 and len(wt15) == 4:
+                cipher_reason = f"CipherB BUY: {tf} cross-up at WT1={wt15[0]:.2f}, WT2={wt15[1]:.2f} (os<={CIPHERB_OS_LEVEL})"
+            elif tf == '4h' and wt4h and len(wt4h) == 4:
+                cipher_reason = f"CipherB BUY: {tf} cross-up at WT1={wt4h[0]:.2f}, WT2={wt4h[1]:.2f} (os<={CIPHERB_OS_LEVEL})"
+        elif cipher_sell is True:
+            tf = '15m' if sell15 else ('4h' if sell4h else None)
+            cipher_source_tf = tf
+            if tf == '15m' and wt15 and len(wt15) == 4:
+                cipher_reason = f"CipherB SELL: {tf} cross-down at WT1={wt15[0]:.2f}, WT2={wt15[1]:.2f} (ob>={CIPHERB_OB_LEVEL})"
+            elif tf == '4h' and wt4h and len(wt4h) == 4:
+                cipher_reason = f"CipherB SELL: {tf} cross-down at WT1={wt4h[0]:.2f}, WT2={wt4h[1]:.2f} (ob>={CIPHERB_OB_LEVEL})"
         
         # Impulse score (useful for scalping screens)
         # Goal: surface symbols with unusually large *current* movement + activity.
@@ -105,8 +225,8 @@ class SymbolState:
             symbol=self.symbol,
             exchange=self.exchange,
             last_price=self.last_price or 0.0,
-            wt1=wt1,
-            wt2=wt2,
+            wt1=wt1_1m,
+            wt2=wt2_1m,
             cipher_buy=cipher_buy,
             cipher_sell=cipher_sell,
             impulse_score=impulse_sc,
@@ -133,6 +253,8 @@ class SymbolState:
             momentum_score=mom_score,
             signal_score=signal_sc,
             signal_strength=signal_str,
+            cipher_source_tf=cipher_source_tf,
+            cipher_reason=cipher_reason,
         )
 
 def _ema_series(values: list[float], length: int) -> list[float]:
@@ -176,7 +298,7 @@ def wavetrend(
     We compute this on the 1m series locally (no higher timeframe security()).
     """
     if len(closes) < max(chlen + 2, avg + 2, malen + 2):
-        return None, None
+        return None, None, None, None
 
     # hlc3
     c = list(closes)

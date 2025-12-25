@@ -26,6 +26,8 @@ class SymbolMetrics(BaseModel):
     wt2: Optional[float] = None
     cipher_buy: Optional[bool] = None   # WT cross up while oversold
     cipher_sell: Optional[bool] = None  # WT cross down while overbought
+    cipher_source_tf: Optional[str] = None  # '15m' | '4h' indicating which timeframe triggered
+    cipher_reason: Optional[str] = None  # human-readable explanation for the signal
 
     # Scalping impulse
     impulse_score: Optional[float] = None  # 0..100 (higher = more impulsive)

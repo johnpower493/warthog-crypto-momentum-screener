@@ -21,7 +21,8 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
-*.exe
+*.exe*
+*.sqlite3
 
 # Virtual environments
 venv/
