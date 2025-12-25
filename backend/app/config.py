@@ -33,6 +33,11 @@ ENABLE_FULL_REFRESH_5M = os.getenv("ENABLE_FULL_REFRESH_5M", "false").lower() in
 FULL_REFRESH_BACKFILL_LIMIT = int(os.getenv("FULL_REFRESH_BACKFILL_LIMIT", "200"))
 FULL_REFRESH_OFFSET_SEC = int(os.getenv("FULL_REFRESH_OFFSET_SEC", "2"))  # wait N seconds after boundary
 
+# Staleness thresholds (used by /debug/status)
+STALE_TICKER_MS = int(os.getenv("STALE_TICKER_MS", "30000"))
+STALE_KLINE_MS = int(os.getenv("STALE_KLINE_MS", "90000"))
+DEBUG_STATUS_INCLUDE_LISTS_DEFAULT = os.getenv("DEBUG_STATUS_INCLUDE_LISTS_DEFAULT", "false").lower() in {"1", "true", "yes"}
+
 # Bybit endpoints (public)
 BYBIT_REST = os.getenv("BYBIT_REST", "https://api.bybit.com")
 BYBIT_WS_LINEAR = os.getenv("BYBIT_WS_LINEAR", "wss://stream.bybit.com/v5/public/linear")

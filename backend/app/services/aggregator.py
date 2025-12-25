@@ -102,29 +102,47 @@ class Aggregator:
     def state_count(self) -> int:
         return len(self._states)
 
-    def stale_symbols(self, now_ms: int, ticker_stale_ms: int = 30_000, kline_stale_ms: int = 90_000) -> dict:
+    def stale_symbols(
+        self,
+        now_ms: int,
+        ticker_stale_ms: int = 30_000,
+        kline_stale_ms: int = 90_000,
+        include_lists: bool = False,
+    ) -> dict:
         """Return stale symbols for ticker/kline.
 
         ticker_stale_ms: threshold for last ticker update age
         kline_stale_ms: threshold for last kline update age
         """
-        stale_ticker = []
-        stale_kline = []
+        stale_ticker = [] if include_lists else None
+        stale_kline = [] if include_lists else None
+        ticker_count = 0
+        kline_count = 0
+
         for sym in self._states.keys():
             t = self._last_ticker_by_symbol.get(sym)
             k = self._last_kline_by_symbol.get(sym)
             if t is None or now_ms - t > ticker_stale_ms:
-                stale_ticker.append(sym)
+                ticker_count += 1
+                if include_lists:
+                    stale_ticker.append(sym)  # type: ignore[union-attr]
             if k is None or now_ms - k > kline_stale_ms:
-                stale_kline.append(sym)
-        # keep small payloads
-        stale_ticker.sort()
-        stale_kline.sort()
+                kline_count += 1
+                if include_lists:
+                    stale_kline.append(sym)  # type: ignore[union-attr]
+
+        if include_lists:
+            stale_ticker.sort()  # type: ignore[union-attr]
+            stale_kline.sort()  # type: ignore[union-attr]
+
         return {
-            "ticker": stale_ticker,
-            "kline": stale_kline,
-            "ticker_count": len(stale_ticker),
-            "kline_count": len(stale_kline),
+            "ticker": stale_ticker if include_lists else [],
+            "kline": stale_kline if include_lists else [],
+            "ticker_count": ticker_count,
+            "kline_count": kline_count,
+            "include_lists": include_lists,
+            "ticker_stale_ms": ticker_stale_ms,
+            "kline_stale_ms": kline_stale_ms,
         }
 
     def get_history(self, symbol: str, limit: int = 60):

@@ -56,7 +56,7 @@ async def readyz():
     return {"ready": any_running, "tasks": tasks}
 
 @app.get("/debug/status")
-async def debug_status():
+async def debug_status(include_lists: bool | None = None):
     import time
     now_ms = int(time.time() * 1000)
     
@@ -98,8 +98,25 @@ async def debug_status():
     bybit_last_ticker_ingest = getattr(stream_mgr.agg_bybit, 'last_ticker_ingest_ts', bybit_last_ingest) if hasattr(stream_mgr, 'agg_bybit') else 0
     bybit_last_emit = getattr(stream_mgr.agg_bybit, 'last_emit_ts', 0) if hasattr(stream_mgr, 'agg_bybit') else 0
     
-    bin_stale = stream_mgr.agg.stale_symbols(now_ms)
-    byb_stale = stream_mgr.agg_bybit.stale_symbols(now_ms) if hasattr(stream_mgr, 'agg_bybit') else {"ticker":[],"kline":[],"ticker_count":0,"kline_count":0}
+    from .config import STALE_TICKER_MS, STALE_KLINE_MS, DEBUG_STATUS_INCLUDE_LISTS_DEFAULT
+    inc = DEBUG_STATUS_INCLUDE_LISTS_DEFAULT if include_lists is None else bool(include_lists)
+
+    bin_stale = stream_mgr.agg.stale_symbols(
+        now_ms,
+        ticker_stale_ms=STALE_TICKER_MS,
+        kline_stale_ms=STALE_KLINE_MS,
+        include_lists=inc,
+    )
+    byb_stale = (
+        stream_mgr.agg_bybit.stale_symbols(
+            now_ms,
+            ticker_stale_ms=STALE_TICKER_MS,
+            kline_stale_ms=STALE_KLINE_MS,
+            include_lists=inc,
+        )
+        if hasattr(stream_mgr, 'agg_bybit')
+        else {"ticker":[],"kline":[],"ticker_count":0,"kline_count":0, "include_lists": inc, "ticker_stale_ms": STALE_TICKER_MS, "kline_stale_ms": STALE_KLINE_MS}
+    )
 
     return {
         "binance": {
