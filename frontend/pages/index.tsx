@@ -81,8 +81,8 @@ export default function Home() {
     | 'highSignal'
     | 'impulse'
   >('none');
-  const [minSignal, setMinSignal] = useState<number | ''>('');
-  const [minAbs5m, setMinAbs5m] = useState<number | ''>('');
+  // (Removed) manual numeric threshold inputs. If you'd like these back later,
+  // we can reintroduce them with validation.
 
   const [sortKey, setSortKey] = useState<SortKey>('signal_score');
   const [sortDir, setSortDir] = useState<'desc'|'asc'>('desc');
@@ -107,6 +107,13 @@ export default function Home() {
   const [lastUpdate, setLastUpdate] = useState<number>(0);
   const pollTimer = useRef<number | null>(null);
 
+  const [staleCount, setStaleCount] = useState<{binanceTicker:number; binanceKline:number; bybitTicker:number; bybitKline:number}>({
+    binanceTicker: 0,
+    binanceKline: 0,
+    bybitTicker: 0,
+    bybitKline: 0,
+  });
+
   useEffect(() => {
     // persist favorites
     localStorage.setItem('favs', JSON.stringify(favs));
@@ -117,62 +124,129 @@ export default function Home() {
     const envUrl = process.env.NEXT_PUBLIC_BACKEND_WS;
     const url = override || envUrl || 'ws://localhost:8000/ws/screener';
 
+    const backendHttp = process.env.NEXT_PUBLIC_BACKEND_HTTP || 'http://127.0.0.1:8000';
+
+    let cancelled = false;
+    let ws: WebSocket | null = null;
+    let attempt = 0;
+    let failCount = 0;
+
+    function sleep(ms: number) {
+      return new Promise((r) => setTimeout(r, ms));
+    }
+
     function startHttpPolling() {
-      try { if (pollTimer.current) window.clearInterval(pollTimer.current); } catch {}
+      try {
+        if (pollTimer.current) window.clearInterval(pollTimer.current);
+      } catch {}
       setSource('http');
       setStatus('connected');
       const poll = async () => {
         try {
-          // default to combined snapshot if ws path endswith /all, else binance snapshot
           const endAll = url.endsWith('/all');
           const endpoint = endAll ? '/debug/snapshot/all' : '/debug/snapshot';
-          const backendBase = (process.env.NEXT_PUBLIC_BACKEND_HTTP || 'http://127.0.0.1:8000');
-          const resp = await fetch(backendBase + endpoint);
+          const resp = await fetch(backendHttp + endpoint);
           if (!resp.ok) return;
           const s: Snapshot = await resp.json();
-          const map = httpState.current; map.clear();
-          for (const m of (s.metrics || [])) {
-            map.set(`${(m.exchange||'binance')}:${m.symbol}`, m);
-          }
+          const map = httpState.current;
+          map.clear();
+          for (const m of s.metrics || []) map.set(`${(m.exchange || 'binance')}:${m.symbol}`, m);
           setRows(Array.from(map.values()));
           setLastUpdate(Date.now());
-        } catch (e) {
-          console.error('HTTP poll error', e);
-        }
+        } catch {}
       };
       poll();
       pollTimer.current = window.setInterval(poll, 5000);
     }
 
-    // If url starts with ws:// and fails, fallback to HTTP polling
-    if (url.startsWith('ws')) {
-      console.log('Connecting WS to', url);
-      const ws = new WebSocket(url);
-      setStatus('connecting');
-      wsRef.current = ws;
-      ws.onopen = () => { console.log('WS open', url); setStatus('connected'); setSource('ws'); };
-      ws.onerror = (e) => { console.error('WS error', e); setStatus('disconnected'); startHttpPolling(); };
-      ws.onclose = () => { console.warn('WS closed'); setStatus('disconnected'); if (source !== 'http') startHttpPolling(); };
-      ws.onmessage = (ev) => {
-        try {
-          const snap: Snapshot | {type: string} = JSON.parse(ev.data);
-          if ((snap as any).type === 'ping') return;
-          const s = snap as Snapshot;
-          setRows(s.metrics);
-          setLastUpdate(Date.now());
-        } catch (err) { console.error('WS parse error', err); }
-      };
-      return () => {
-        try { ws.close(); } catch {}
-        wsRef.current = null;
-        setStatus('disconnected');
-        if (pollTimer.current) { window.clearInterval(pollTimer.current); pollTimer.current = null; }
-      };
-    } else {
-      // Non-WS url provided -> treat as HTTP base
-      startHttpPolling();
-      return () => { if (pollTimer.current) { window.clearInterval(pollTimer.current); pollTimer.current = null; } };
+    async function pollStatusOnce() {
+      try {
+        const resp = await fetch(backendHttp + '/debug/status');
+        if (!resp.ok) return;
+        const j = await resp.json();
+        const b = j.binance?.stale || {};
+        const y = j.bybit?.stale || {};
+        setStaleCount({
+          binanceTicker: b.ticker_count || 0,
+          binanceKline: b.kline_count || 0,
+          bybitTicker: y.ticker_count || 0,
+          bybitKline: y.kline_count || 0,
+        });
+      } catch {}
     }
+
+    const statusTimer = window.setInterval(pollStatusOnce, 5000);
+    pollStatusOnce();
+
+    async function connectLoop() {
+      if (!url.startsWith('ws')) {
+        startHttpPolling();
+        return;
+      }
+
+      setSource('ws');
+
+      while (!cancelled) {
+        setStatus('connecting');
+
+        try {
+          ws = new WebSocket(url);
+          wsRef.current = ws;
+
+          await new Promise<void>((resolve, reject) => {
+            if (!ws) return reject(new Error('ws null'));
+            ws.onopen = () => resolve();
+            ws.onerror = () => reject(new Error('ws error'));
+          });
+
+          attempt = 0;
+          failCount = 0;
+          setStatus('connected');
+
+          ws.onmessage = (ev) => {
+            try {
+              const snap: Snapshot | { type: string } = JSON.parse(ev.data);
+              if ((snap as any).type === 'ping') return;
+              const s = snap as Snapshot;
+              setRows(s.metrics);
+              setLastUpdate(Date.now());
+            } catch {}
+          };
+
+          await new Promise<void>((resolve) => {
+            if (!ws) return resolve();
+            ws.onclose = () => resolve();
+            ws.onerror = () => resolve();
+          });
+
+          setStatus('disconnected');
+          failCount += 1;
+        } catch {
+          setStatus('disconnected');
+          failCount += 1;
+        }
+
+        // If WS repeatedly fails, fall back to HTTP polling.
+        if (failCount >= 3) {
+          startHttpPolling();
+          return;
+        }
+
+        attempt += 1;
+        const base = Math.min(10_000, 500 * Math.pow(2, Math.min(attempt, 5)));
+        const jitter = Math.floor(Math.random() * 250);
+        await sleep(base + jitter);
+      }
+    }
+
+    connectLoop();
+
+    return () => {
+      cancelled = true;
+      try { if (ws) ws.close(); } catch {}
+      try { if (pollTimer.current) window.clearInterval(pollTimer.current); } catch {}
+      window.clearInterval(statusTimer);
+    };
   }, []);
 
   const filtered = useMemo(() => {
@@ -181,24 +255,18 @@ export default function Home() {
 
     if (q) base = base.filter((r) => r.symbol.includes(q));
 
-    if (minSignal !== '') {
-      base = base.filter((r) => (r.signal_score ?? -Infinity) >= (minSignal as number));
-    }
-    if (minAbs5m !== '') {
-      base = base.filter((r) => Math.abs(r.change_5m ?? 0) >= (minAbs5m as number) / 100);
-    }
-
     // Presets
     if (preset === 'gainers5m') base = base.filter((r) => (r.change_5m ?? -Infinity) > 0);
     if (preset === 'losers5m') base = base.filter((r) => (r.change_5m ?? Infinity) < 0);
     if (preset === 'highSignal') base = base.filter((r) => (r.signal_score ?? -Infinity) >= 70);
-    if (preset === 'impulse') base = base.filter((r) => (r.impulse_score ?? 0) >= 60);
+    // Impulse preset: sort-first (do not hard-filter). We keep this as a preset
+    // so it can set sorting to impulse_score.
     if (preset === 'volatile5m') base = base.filter((r) => Math.abs(r.change_5m ?? 0) > 0);
     if (preset === 'highOiDelta5m') base = base.filter((r) => Math.abs(r.oi_change_5m ?? 0) > 0);
     if (preset === 'breakout15m') base = base.filter((r) => (r.breakout_15m ?? 0) > 0);
 
     return base;
-  }, [rows, query, onlyFavs, favs, preset, minSignal, minAbs5m]);
+  }, [rows, query, onlyFavs, favs, preset]);
 
   const sorted = useMemo(() => {
     const cmpString = (a: string, b: string) =>
@@ -326,31 +394,8 @@ export default function Home() {
               >
                 High Signal
               </button>
-              <button className="button" onClick={()=>{setPreset('none'); setMinSignal(''); setMinAbs5m('');}}>Reset</button>
+              <button className="button" onClick={()=>{setPreset('none');}}>Reset</button>
             </div>
-
-            <input
-              className="input"
-              style={{ minWidth: 120 }}
-              inputMode="numeric"
-              placeholder="Min Signal"
-              value={minSignal}
-              onChange={(e)=>{
-                const v = e.target.value.trim();
-                setMinSignal(v===''? '' : Number(v));
-              }}
-            />
-            <input
-              className="input"
-              style={{ minWidth: 140 }}
-              inputMode="numeric"
-              placeholder="Min |5m| %"
-              value={minAbs5m}
-              onChange={(e)=>{
-                const v = e.target.value.trim();
-                setMinAbs5m(v===''? '' : Number(v));
-              }}
-            />
 
             <select className="select" value={sortKey} onChange={e=>setSortKey(e.target.value as SortKey)}>
               <option value="signal_score">Sort: Signal 🔥</option>
@@ -365,7 +410,23 @@ export default function Home() {
               <option value="last_price">Sort: Last</option>
               <option value="symbol">Sort: Symbol</option>
             </select>
-            <span className="badge">{status==='connected'?'Live':'Disconnected'} · {source==='ws'?'WS':'HTTP'}</span>
+            <span className="badge">
+              {status==='connected'?'Live':status==='connecting'?'Connecting…':'Disconnected'} · {source==='ws'?'WS':'HTTP'}
+            </span>
+            <span className="badge" title="Stale symbol counts (ticker/kline)">
+              Stale B(t/k): {staleCount.binanceTicker}/{staleCount.binanceKline} · Y(t/k): {staleCount.bybitTicker}/{staleCount.bybitKline}
+            </span>
+            <button
+              className="button"
+              onClick={async ()=>{
+                try{
+                  await fetch((process.env.NEXT_PUBLIC_BACKEND_HTTP || 'http://127.0.0.1:8000') + '/debug/resync?exchange=binance', {method:'POST'});
+                }catch{}
+              }}
+              title="Restart streams + backfill (Binance)"
+            >
+              Resync
+            </button>
             <button className="button" onClick={()=>setSortDir(d=> d==='desc'?'asc':'desc')}>
               {sortDir==='desc' ? 'Desc' : 'Asc'}
             </button>
@@ -464,6 +525,11 @@ export default function Home() {
           </div>
         )}
 
+        {sorted.length === 0 && (
+          <div style={{ padding: 12 }} className="muted">
+            No results for current selection. Try Reset or choose a different preset.
+          </div>
+        )}
         <div className="tableWrap">
           <table className="table">
             <thead>

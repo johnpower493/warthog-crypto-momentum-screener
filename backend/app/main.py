@@ -28,7 +28,32 @@ async def on_startup():
 
 @app.get("/health")
 async def health():
+    # Backward-compatible basic liveness endpoint
     return {"status": "ok"}
+
+@app.get("/healthz")
+async def healthz():
+    # Standard liveness probe
+    return {"status": "ok"}
+
+@app.get("/readyz")
+async def readyz():
+    """Readiness probe.
+
+    For local-only use we keep this lightweight and fast:
+    - confirms the stream manager has started
+    - confirms we have at least one running stream task
+
+    (We avoid making external network calls here to keep the probe reliable.)
+    """
+    tasks = {
+        "binance_kline": bool(stream_mgr._task and not stream_mgr._task.done()),
+        "binance_ticker": bool(stream_mgr._task_bin_ticker and not stream_mgr._task_bin_ticker.done()),
+        "bybit_kline": bool(stream_mgr._task_bybit and not stream_mgr._task_bybit.done()),
+        "bybit_ticker": bool(stream_mgr._task_bybit_ticker and not stream_mgr._task_bybit_ticker.done()),
+    }
+    any_running = any(tasks.values())
+    return {"ready": any_running, "tasks": tasks}
 
 @app.get("/debug/status")
 async def debug_status():
@@ -48,15 +73,21 @@ async def debug_status():
     def check_task(task, name):
         if task is None:
             return {"status": "not_started", "error": None}
-        elif task.done():
+        # Important: CancelledError is a BaseException in modern asyncio, so we must
+        # handle it explicitly to avoid 500s in debug endpoints during restarts.
+        if task.cancelled():
+            return {"status": "cancelled", "error": None}
+        if task.done():
             exc = None
             try:
                 exc = task.exception()
-            except Exception:
-                pass
+            except asyncio.CancelledError:
+                return {"status": "cancelled", "error": None}
+            except BaseException as e:
+                # Any other BaseException should be represented as an error string
+                return {"status": "dead", "error": str(e)}
             return {"status": "dead", "error": str(exc) if exc else "completed"}
-        else:
-            return {"status": "running", "error": None}
+        return {"status": "running", "error": None}
     
     bin_last_ingest = getattr(stream_mgr.agg, 'last_ingest_ts', 0)
     bin_last_kline_ingest = getattr(stream_mgr.agg, 'last_kline_ingest_ts', bin_last_ingest)
@@ -67,6 +98,9 @@ async def debug_status():
     bybit_last_ticker_ingest = getattr(stream_mgr.agg_bybit, 'last_ticker_ingest_ts', bybit_last_ingest) if hasattr(stream_mgr, 'agg_bybit') else 0
     bybit_last_emit = getattr(stream_mgr.agg_bybit, 'last_emit_ts', 0) if hasattr(stream_mgr, 'agg_bybit') else 0
     
+    bin_stale = stream_mgr.agg.stale_symbols(now_ms)
+    byb_stale = stream_mgr.agg_bybit.stale_symbols(now_ms) if hasattr(stream_mgr, 'agg_bybit') else {"ticker":[],"kline":[],"ticker_count":0,"kline_count":0}
+
     return {
         "binance": {
             "symbols": len(bin_syms),
@@ -81,7 +115,8 @@ async def debug_status():
             "tasks": {
                 "kline": check_task(stream_mgr._task, "binance_kline"),
                 "ticker": check_task(stream_mgr._task_bin_ticker, "binance_ticker"),
-            }
+            },
+            "stale": bin_stale,
         },
         "bybit": {
             "symbols": len(byb_syms),
@@ -96,7 +131,8 @@ async def debug_status():
             "tasks": {
                 "kline": check_task(stream_mgr._task_bybit, "bybit_kline"),
                 "ticker": check_task(stream_mgr._task_bybit_ticker, "bybit_ticker"),
-            }
+            },
+            "stale": byb_stale,
         }
     }
 
@@ -173,6 +209,63 @@ async def debug_snapshot_all():
         ts = max(ts, snap_y.ts)
     from .models import ScreenerSnapshot
     return ScreenerSnapshot(exchange="all", ts=ts, metrics=metrics).model_dump()
+
+@app.post("/debug/resync")
+async def debug_resync(exchange: str = "all", backfill_limit: int = 200):
+    """Manually resync streams/backfill without restarting the process.
+
+    Intended for local-only deployments (ngrok/cloudflare tunnel).
+    """
+    import logging
+    log = logging.getLogger(__name__)
+
+    results = {"exchange": exchange, "backfill_limit": backfill_limit, "actions": []}
+
+    async def do_binance():
+        await stream_mgr._restart_binance()
+        await stream_mgr._restart_binance_ticker()
+        results["actions"].append("binance_restart")
+        try:
+            await stream_mgr._backfill_binance(limit=backfill_limit)
+            results["actions"].append("binance_backfill")
+        except Exception as e:
+            log.warning(f"Resync: Binance backfill failed: {e}")
+            results["actions"].append("binance_backfill_failed")
+        try:
+            await stream_mgr.agg.heartbeat_emit()
+            results["actions"].append("binance_emit")
+        except Exception:
+            pass
+
+    async def do_bybit():
+        await stream_mgr._restart_bybit()
+        await stream_mgr._restart_bybit_ticker()
+        results["actions"].append("bybit_restart")
+        try:
+            await stream_mgr._backfill_bybit(limit=backfill_limit)
+            results["actions"].append("bybit_backfill")
+        except Exception as e:
+            log.warning(f"Resync: Bybit backfill failed: {e}")
+            results["actions"].append("bybit_backfill_failed")
+        try:
+            await stream_mgr.agg_bybit.heartbeat_emit()
+            results["actions"].append("bybit_emit")
+        except Exception:
+            pass
+
+    try:
+        if exchange in {"all", "binance"}:
+            await do_binance()
+        if exchange in {"all", "bybit"}:
+            await do_bybit()
+        results["ok"] = True
+    except Exception as e:
+        # Ensure this endpoint never throws 500s; surface the error instead.
+        results["ok"] = False
+        results["error"] = str(e)
+
+    return results
+
 
 @app.get("/debug/history")
 async def debug_history(exchange: str, symbol: str, limit: int = 60):

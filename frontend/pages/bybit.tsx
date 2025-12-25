@@ -24,6 +24,8 @@ type Metric = {
   momentum_5m?: number | null;
   momentum_15m?: number | null;
   momentum_score?: number | null;
+  impulse_score?: number | null;
+  impulse_dir?: number | null;
   signal_score?: number | null;
   signal_strength?: string | null;
   ts: number;
@@ -41,28 +43,95 @@ export default function BybitPage() {
 
   const [query, setQuery] = useState('');
   const [preset, setPreset] = useState<
-    'none' | 'gainers5m' | 'losers5m' | 'highSignal' | 'volatile5m' | 'highOiDelta5m' | 'breakout15m'
+    | 'none'
+    | 'gainers5m'
+    | 'losers5m'
+    | 'highSignal'
+    | 'volatile5m'
+    | 'highOiDelta5m'
+    | 'breakout15m'
+    | 'impulse'
   >('gainers5m');
-  const [minSignal, setMinSignal] = useState<number | ''>('');
-  const [minAbs5m, setMinAbs5m] = useState<number | ''>('');
+  // (Removed) manual numeric threshold inputs.
+
+  const [staleCount, setStaleCount] = useState<{ticker:number; kline:number}>({ticker:0, kline:0});
 
   useEffect(() => {
-    const defaultUrl = 'ws://localhost:8000/ws/screener/bybit';
-    const base = process.env.NEXT_PUBLIC_BACKEND_WS || defaultUrl.replace('/ws/screener','/ws/screener');
-    const url = base.replace('/ws/screener','/ws/screener/bybit');
-    const ws = new WebSocket(url);
-    setStatus('connecting');
-    ws.onopen = () => setStatus('connected');
-    ws.onerror = () => setStatus('disconnected');
-    ws.onclose = () => setStatus('disconnected');
-    ws.onmessage = (ev) => {
+    const backendHttp = process.env.NEXT_PUBLIC_BACKEND_HTTP || 'http://127.0.0.1:8000';
+
+    let cancelled = false;
+    let attempt = 0;
+    let ws: WebSocket | null = null;
+
+    function sleep(ms: number) {
+      return new Promise((r) => setTimeout(r, ms));
+    }
+
+    async function pollStatusOnce() {
       try {
-        const s: Snapshot = JSON.parse(ev.data);
-        if ((s as any).type === 'ping') return;
-        setRows(s.metrics);
+        const resp = await fetch(backendHttp + '/debug/status');
+        if (!resp.ok) return;
+        const j = await resp.json();
+        const y = j.bybit?.stale || {};
+        setStaleCount({ ticker: y.ticker_count || 0, kline: y.kline_count || 0 });
       } catch {}
+    }
+
+    const statusTimer = window.setInterval(pollStatusOnce, 5000);
+    pollStatusOnce();
+
+    async function connectLoop() {
+      const defaultUrl = 'ws://localhost:8000/ws/screener/bybit';
+      const base = process.env.NEXT_PUBLIC_BACKEND_WS || defaultUrl;
+      const url = base.replace('/ws/screener', '/ws/screener/bybit');
+
+      while (!cancelled) {
+        setStatus('connecting');
+        try {
+          ws = new WebSocket(url);
+
+          await new Promise<void>((resolve, reject) => {
+            if (!ws) return reject(new Error('ws null'));
+            ws.onopen = () => resolve();
+            ws.onerror = () => reject(new Error('ws error'));
+          });
+
+          attempt = 0;
+          setStatus('connected');
+
+          ws.onmessage = (ev) => {
+            try {
+              const s: Snapshot = JSON.parse(ev.data);
+              if ((s as any).type === 'ping') return;
+              setRows(s.metrics);
+            } catch {}
+          };
+
+          await new Promise<void>((resolve) => {
+            if (!ws) return resolve();
+            ws.onclose = () => resolve();
+            ws.onerror = () => resolve();
+          });
+
+          setStatus('disconnected');
+        } catch {
+          setStatus('disconnected');
+        }
+
+        attempt += 1;
+        const baseDelay = Math.min(10_000, 500 * Math.pow(2, Math.min(attempt, 5)));
+        const jitter = Math.floor(Math.random() * 250);
+        await sleep(baseDelay + jitter);
+      }
+    }
+
+    connectLoop();
+
+    return () => {
+      cancelled = true;
+      try { if (ws) ws.close(); } catch {}
+      window.clearInterval(statusTimer);
     };
-    return () => ws.close();
   }, []);
 
   const filtered = useMemo(() => {
@@ -71,18 +140,16 @@ export default function BybitPage() {
 
     if (q) base = base.filter((r) => r.symbol.includes(q));
 
-    if (minSignal !== '') base = base.filter((r) => (r.signal_score ?? -Infinity) >= (minSignal as number));
-    if (minAbs5m !== '') base = base.filter((r) => Math.abs(r.change_5m ?? 0) >= (minAbs5m as number) / 100);
-
     if (preset === 'gainers5m') base = base.filter((r) => (r.change_5m ?? -Infinity) > 0);
     if (preset === 'losers5m') base = base.filter((r) => (r.change_5m ?? Infinity) < 0);
     if (preset === 'highSignal') base = base.filter((r) => (r.signal_score ?? -Infinity) >= 70);
+    // Impulse preset: sort-first (do not hard-filter).
     if (preset === 'volatile5m') base = base.filter((r) => Math.abs(r.change_5m ?? 0) > 0);
     if (preset === 'highOiDelta5m') base = base.filter((r) => Math.abs(r.oi_change_5m ?? 0) > 0);
     if (preset === 'breakout15m') base = base.filter((r) => (r.breakout_15m ?? 0) > 0);
 
     return base;
-  }, [rows, query, preset, minSignal, minAbs5m]);
+  }, [rows, query, preset]);
 
   const sorted = useMemo(() => {
     const arr = [...filtered];
@@ -99,6 +166,9 @@ export default function BybitPage() {
     }
     if (preset === 'breakout15m') {
       return arr.sort((a, b) => (b.breakout_15m ?? -Infinity) - (a.breakout_15m ?? -Infinity));
+    }
+    if (preset === 'impulse') {
+      return arr.sort((a, b) => (b.impulse_score ?? -Infinity) - (a.impulse_score ?? -Infinity));
     }
 
     // Default: gainers 5m
@@ -122,36 +192,31 @@ export default function BybitPage() {
               <button className={"button " + (preset==='volatile5m'?'buttonActive':'')} onClick={()=>setPreset(preset==='volatile5m'?'none':'volatile5m')}>Volatile 5m</button>
               <button className={"button " + (preset==='highOiDelta5m'?'buttonActive':'')} onClick={()=>setPreset(preset==='highOiDelta5m'?'none':'highOiDelta5m')}>High OI Δ 5m</button>
               <button className={"button " + (preset==='breakout15m'?'buttonActive':'')} onClick={()=>setPreset(preset==='breakout15m'?'none':'breakout15m')}>Breakout 15m</button>
+              <button className={"button " + (preset==='impulse'?'buttonActive':'')} onClick={()=>setPreset(preset==='impulse'?'none':'impulse')}>Impulse</button>
               <button className={"button " + (preset==='highSignal'?'buttonActive':'')} onClick={()=>setPreset(preset==='highSignal'?'none':'highSignal')}>High Signal</button>
-              <button className="button" onClick={()=>{setPreset('gainers5m'); setMinSignal(''); setMinAbs5m('');}}>Reset</button>
+              <button className="button" onClick={()=>{setPreset('gainers5m');}}>Reset</button>
             </div>
 
-            <input
-              className="input"
-              style={{ minWidth: 120 }}
-              inputMode="numeric"
-              placeholder="Min Signal"
-              value={minSignal}
-              onChange={(e)=>{
-                const v = e.target.value.trim();
-                setMinSignal(v===''? '' : Number(v));
+            <span className="badge">{status==='connected'?'Live':status==='connecting'?'Connecting…':'Disconnected'}</span>
+            <span className="badge" title="Stale symbol counts (ticker/kline)">Stale (t/k): {staleCount.ticker}/{staleCount.kline}</span>
+            <button
+              className="button"
+              onClick={async ()=>{
+                try{
+                  await fetch((process.env.NEXT_PUBLIC_BACKEND_HTTP || 'http://127.0.0.1:8000') + '/debug/resync?exchange=bybit', {method:'POST'});
+                }catch{}
               }}
-            />
-            <input
-              className="input"
-              style={{ minWidth: 140 }}
-              inputMode="numeric"
-              placeholder="Min |5m| %"
-              value={minAbs5m}
-              onChange={(e)=>{
-                const v = e.target.value.trim();
-                setMinAbs5m(v===''? '' : Number(v));
-              }}
-            />
-
-            <span className="badge">{status==='connected'?'Live':'Disconnected'}</span>
+              title="Restart streams + backfill (Bybit)"
+            >
+              Resync
+            </button>
           </div>
         </div>
+        {sorted.length === 0 && (
+          <div style={{ padding: 12 }} className="muted">
+            No results for current selection. Try Reset or choose a different preset.
+          </div>
+        )}
         <div className="tableWrap">
           <table className="table">
             <thead>

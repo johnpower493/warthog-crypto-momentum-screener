@@ -11,6 +11,9 @@ class Aggregator:
     def __init__(self, exchange: str):
         self.exchange = exchange
         self._states: Dict[str, SymbolState] = {}
+        # Per-symbol last update timestamps (epoch ms)
+        self._last_kline_by_symbol: Dict[str, int] = {}
+        self._last_ticker_by_symbol: Dict[str, int] = {}
         self._subscribers: List[asyncio.Queue] = []
         self._lock = asyncio.Lock()
         # Initialize timestamps to current time to prevent false watchdog triggers
@@ -35,6 +38,7 @@ class Aggregator:
         import time
         now_ms = int(time.time() * 1000)
         self.last_kline_ingest_ts = now_ms
+        self._last_kline_by_symbol[k.symbol] = now_ms
         self.last_ingest_ts = max(self.last_kline_ingest_ts, self.last_ticker_ingest_ts)
         # Throttled emit
         await self.emit_if_due()
@@ -98,6 +102,31 @@ class Aggregator:
     def state_count(self) -> int:
         return len(self._states)
 
+    def stale_symbols(self, now_ms: int, ticker_stale_ms: int = 30_000, kline_stale_ms: int = 90_000) -> dict:
+        """Return stale symbols for ticker/kline.
+
+        ticker_stale_ms: threshold for last ticker update age
+        kline_stale_ms: threshold for last kline update age
+        """
+        stale_ticker = []
+        stale_kline = []
+        for sym in self._states.keys():
+            t = self._last_ticker_by_symbol.get(sym)
+            k = self._last_kline_by_symbol.get(sym)
+            if t is None or now_ms - t > ticker_stale_ms:
+                stale_ticker.append(sym)
+            if k is None or now_ms - k > kline_stale_ms:
+                stale_kline.append(sym)
+        # keep small payloads
+        stale_ticker.sort()
+        stale_kline.sort()
+        return {
+            "ticker": stale_ticker,
+            "kline": stale_kline,
+            "ticker_count": len(stale_ticker),
+            "kline_count": len(stale_kline),
+        }
+
     def get_history(self, symbol: str, limit: int = 60):
         st = self._states.get(symbol)
         if not st:
@@ -114,6 +143,7 @@ class Aggregator:
         import time
         now_ms = ts_ms or int(time.time() * 1000)
         self.last_ticker_ingest_ts = now_ms
+        self._last_ticker_by_symbol[symbol] = now_ms
         self.last_ingest_ts = max(self.last_kline_ingest_ts, self.last_ticker_ingest_ts)
         await self.emit_if_due()
     
