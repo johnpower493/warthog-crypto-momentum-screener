@@ -44,6 +44,7 @@ a{color:inherit}
   .input{min-width:160px}
   .table thead th{padding:10px;font-size:11px}
   .table tbody td{padding:10px;font-size:12px}
+  .footer{flex-direction:column;align-items:flex-start}
 }
 @media (max-width: 520px){
   .hide-xs{display:none}
@@ -55,8 +56,59 @@ a{color:inherit}
 .kpi{display:flex;gap:12px;align-items:center}
 .kpi .value{font-size:20px;font-weight:700}
 .kpi .label{font-size:12px;color:var(--muted)}
-.grid{display:grid;gap:12px;grid-template-columns:repeat(4,1fr);}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));}
 .card{background:linear-gradient(180deg,#101825,#0c131e);border:1px solid var(--border);border-radius:12px;padding:12px}
+
+/* Details modal + mobile bottom sheet */
+.modalOverlay{
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  /* symmetrical padding + safe-area */
+  padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  height: 100dvh;
+}
+
+.modalSheet{
+  width: 720px;
+  max-width: 95vw;
+  max-height: calc(100dvh - 24px);
+  overflow: auto;
+  position: relative;
+}
+
+.modalHandle{display:none;}
+
+@media (max-width: 720px){
+  .detailsGrid{grid-template-columns: 1fr !important;}
+  .modalOverlay{
+    align-items: flex-end;
+    justify-content: center;
+    padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  }
+  .modalSheet{
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100dvh - 20px);
+    border-radius: 16px 16px 0 0;
+  }
+  .modalHandle{
+    display: block;
+    position: absolute;
+    left: 50%;
+    top: 10px;
+    transform: translateX(-50%);
+    width: 46px;
+    height: 5px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.18);
+  }
+}
+
 .card h3{margin:0 0 8px 0;font-size:13px;color:var(--muted);font-weight:600}
 .pill{display:inline-flex;gap:8px;align-items:baseline;background:#0b1220;border:1px solid var(--border);border-radius:9999px;padding:6px 10px;margin:4px 6px 0 0}
 .pill .sym{font-weight:600}

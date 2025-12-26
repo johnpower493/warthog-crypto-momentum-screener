@@ -163,6 +163,84 @@ export default function Home() {
   const [sentimentBinance, setSentimentBinance] = useState<{buy:number; sell:number; total:number; score:number; bias:string} | null>(null);
   const [sentimentBybit, setSentimentBybit] = useState<{buy:number; sell:number; total:number; score:number; bias:string} | null>(null);
 
+  // Column picker (persisted)
+  const columnMeta: { key: string; label: string; group: string; mobileDefault: boolean }[] = [
+    { key: 'exchange', label: 'Exchange', group: 'Core', mobileDefault: false },
+    { key: 'signal', label: 'Signal', group: 'Core', mobileDefault: true },
+    { key: 'impulse', label: 'Impulse', group: 'Core', mobileDefault: false },
+
+    { key: 'chg1m', label: '1m %', group: 'Returns', mobileDefault: false },
+    { key: 'chg5m', label: '5m %', group: 'Returns', mobileDefault: true },
+    { key: 'chg15m', label: '15m %', group: 'Returns', mobileDefault: true },
+    { key: 'chg60m', label: '60m %', group: 'Returns', mobileDefault: false },
+
+    { key: 'momentum', label: 'Momentum', group: 'Momentum', mobileDefault: false },
+    { key: 'mom5m', label: 'Mom 5m', group: 'Momentum', mobileDefault: false },
+    { key: 'mom15m', label: 'Mom 15m', group: 'Momentum', mobileDefault: false },
+
+    { key: 'oi', label: 'Open Interest', group: 'Open Interest', mobileDefault: false },
+    { key: 'oi5m', label: 'OI Δ 5m', group: 'Open Interest', mobileDefault: false },
+    { key: 'oi15m', label: 'OI Δ 15m', group: 'Open Interest', mobileDefault: false },
+    { key: 'oi1h', label: 'OI Δ 1h', group: 'Open Interest', mobileDefault: false },
+
+    { key: 'atr', label: 'ATR', group: 'Volatility', mobileDefault: false },
+    { key: 'volz', label: 'Vol Z', group: 'Volatility', mobileDefault: false },
+    { key: 'vol1m', label: 'Vol 1m', group: 'Volatility', mobileDefault: false },
+    { key: 'rvol1m', label: 'RVOL 1m', group: 'Volatility', mobileDefault: false },
+
+    { key: 'breakout15m', label: 'Breakout 15m', group: 'Levels', mobileDefault: false },
+    { key: 'vwap15m', label: 'VWAP 15m', group: 'Levels', mobileDefault: false },
+  ];
+
+  const defaultCols: Record<string, boolean> = Object.fromEntries(
+    columnMeta.map((c) => [c.key, c.mobileDefault])
+  );
+  const [showColumns, setShowColumns] = useState(false);
+  const [mobileMode, setMobileMode] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem('mobileMode');
+      return raw ? JSON.parse(raw) : true;
+    } catch {
+      return true;
+    }
+  });
+
+  const [cols, setCols] = useState<Record<string, boolean>>(() => {
+    try {
+      const raw = localStorage.getItem('cols');
+      return raw ? { ...defaultCols, ...JSON.parse(raw) } : defaultCols;
+    } catch {
+      return defaultCols;
+    }
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem('cols', JSON.stringify(cols)); } catch {}
+  }, [cols]);
+
+  useEffect(() => {
+    try { localStorage.setItem('mobileMode', JSON.stringify(mobileMode)); } catch {}
+  }, [mobileMode]);
+
+  // Auto-apply mobile preset on small screens if mobile mode is enabled
+  useEffect(() => {
+    if (!mobileMode) return;
+    if (typeof window === 'undefined') return;
+    const isSmall = window.matchMedia && window.matchMedia('(max-width: 520px)').matches;
+    if (!isSmall) return;
+
+    // If user never customized columns, apply defaults (mobile preset)
+    try {
+      const raw = localStorage.getItem('cols');
+      if (!raw) {
+        setCols(defaultCols);
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mobileMode]);
+
+  const col = (k: string) => !!cols[k];
+
   useEffect(() => {
     // persist favorites
     localStorage.setItem('favs', JSON.stringify(favs));
@@ -400,7 +478,9 @@ export default function Home() {
 
   const openDetails = async (r: Metric) => {
     const exchange = r.exchange || 'binance';
-    const backendBase = process.env.NEXT_PUBLIC_BACKEND_HTTP || 'http://127.0.0.1:8000';
+    const backendBase =
+      process.env.NEXT_PUBLIC_BACKEND_HTTP ||
+      (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}:8000` : 'http://127.0.0.1:8000');
 
     // Show modal immediately with row data; load history + plan + backtests async
     setModal({ open: true, row: r, closes: [], loading: true, plan: null, bt30: null, bt90: null });
@@ -554,8 +634,56 @@ export default function Home() {
             <a className="button" href="/alerts" title="View persisted alerts history">
               History
             </a>
+            <button className={"button "+(showColumns? 'buttonActive':'')} onClick={()=>setShowColumns(v=>!v)} title="Choose table columns">
+              Columns
+            </button>
           </div>
         </div>
+
+        {showColumns && (
+          <div style={{ padding: 12 }}>
+            <div className="card">
+              <h3>Columns</h3>
+              <div className="muted" style={{ marginBottom: 8, fontSize: 12 }}>
+                Tip: on mobile, keep only a few columns enabled to avoid horizontal scrolling.
+              </div>
+              <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+                {Array.from(new Set(columnMeta.map(c=>c.group))).map((grp) => (
+                  <div key={grp} style={{ minWidth: 220 }}>
+                    <div className="muted" style={{ fontSize: 12, marginBottom: 6, fontWeight: 600 }}>{grp}</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {columnMeta.filter(c=>c.group===grp).map((c) => (
+                        <label key={c.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                          <input
+                            type="checkbox"
+                            checked={!!cols[c.key]}
+                            onChange={(e) => setCols((prev) => ({ ...prev, [c.key]: e.target.checked }))}
+                          />
+                          <span className="muted" style={{ fontSize: 13 }}>{c.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  <input type="checkbox" checked={mobileMode} onChange={(e)=>setMobileMode(e.target.checked)} />
+                  <span className="muted">Mobile mode</span>
+                </label>
+                <button className="button" onClick={() => setCols(defaultCols)}>
+                  Mobile preset
+                </button>
+                <button className="button" onClick={() => setCols(Object.fromEntries(Object.keys(cols).map(k => [k, true])) as any)}>
+                  Show all
+                </button>
+                <button className="button" onClick={() => setShowColumns(false)}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Top movers grid */}
         <div style={{padding:12}}>
@@ -659,51 +787,73 @@ export default function Home() {
                 <th className="sortable" onClick={()=>handleHeaderClick('symbol')}>
                   Symbol {sortKey==='symbol' && (sortDir==='desc'?'↓':'↑')}
                 </th>
-                <th className="hide-xs">Exchange</th>
-                <th className="sortable" onClick={()=>handleHeaderClick('signal_score')}>
-                  Signal {sortKey==='signal_score' && (sortDir==='desc'?'↓':'↑')}
-                </th>
-                <th className="sortable hide-sm" onClick={()=>handleHeaderClick('impulse_score')}>
-                  Impulse {sortKey==='impulse_score' && (sortDir==='desc'?'↓':'↑')}
-                </th>
+                {col('exchange') && <th className="hide-xs">Exchange</th>}
+                {col('signal') && (
+                  <th className="sortable" onClick={()=>handleHeaderClick('signal_score')}>
+                    Signal {sortKey==='signal_score' && (sortDir==='desc'?'↓':'↑')}
+                  </th>
+                )}
+                {col('impulse') && (
+                  <th className="sortable hide-sm" onClick={()=>handleHeaderClick('impulse_score')}>
+                    Impulse {sortKey==='impulse_score' && (sortDir==='desc'?'↓':'↑')}
+                  </th>
+                )}
                 <th className="sortable" onClick={()=>handleHeaderClick('last_price')}>
                   Last {sortKey==='last_price' && (sortDir==='desc'?'↓':'↑')}
                 </th>
-                <th className="sortable hide-sm" onClick={()=>handleHeaderClick('change_1m')}>
-                  1m % {sortKey==='change_1m' && (sortDir==='desc'?'↓':'↑')}
-                </th>
-                <th className="sortable" onClick={()=>handleHeaderClick('change_5m')}>
-                  5m % {sortKey==='change_5m' && (sortDir==='desc'?'↓':'↑')}
-                </th>
-                <th className="sortable" onClick={()=>handleHeaderClick('change_15m')}>
-                  15m % {sortKey==='change_15m' && (sortDir==='desc'?'↓':'↑')}
-                </th>
-                <th className="sortable hide-md" onClick={()=>handleHeaderClick('change_60m')}>
-                  60m % {sortKey==='change_60m' && (sortDir==='desc'?'↓':'↑')}
-                </th>
-                <th className="sortable hide-md" onClick={()=>handleHeaderClick('momentum_score')}>
-                  Momentum {sortKey==='momentum_score' && (sortDir==='desc'?'↓':'↑')}
-                </th>
-                <th className="hide-md">Mom 5m</th>
-                <th className="hide-md">Mom 15m</th>
-                <th className="sortable hide-sm" onClick={()=>handleHeaderClick('open_interest')}>
-                  OI {sortKey==='open_interest' && (sortDir==='desc'?'↓':'↑')}
-                </th>
-                <th className="sortable hide-sm" onClick={()=>handleHeaderClick('oi_change_5m')}>
-                  OI Δ 5m {sortKey==='oi_change_5m' && (sortDir==='desc'?'↓':'↑')}
-                </th>
-                <th className="hide-md">OI Δ 15m</th>
-                <th className="hide-md">OI Δ 1h</th>
-                <th className="sortable hide-md" onClick={()=>handleHeaderClick('atr')}>
-                  ATR {sortKey==='atr' && (sortDir==='desc'?'↓':'↑')}
-                </th>
-                <th className="sortable hide-md" onClick={()=>handleHeaderClick('vol_zscore_1m')}>
-                  Vol Z {sortKey==='vol_zscore_1m' && (sortDir==='desc'?'↓':'↑')}
-                </th>
-                <th className="hide-md">Vol 1m</th>
-                <th className="hide-md">RVOL 1m</th>
-                <th className="hide-md">Breakout 15m</th>
-                <th className="hide-md">VWAP 15m</th>
+                {col('chg1m') && (
+                  <th className="sortable hide-sm" onClick={()=>handleHeaderClick('change_1m')}>
+                    1m % {sortKey==='change_1m' && (sortDir==='desc'?'↓':'↑')}
+                  </th>
+                )}
+                {col('chg5m') && (
+                  <th className="sortable" onClick={()=>handleHeaderClick('change_5m')}>
+                    5m % {sortKey==='change_5m' && (sortDir==='desc'?'↓':'↑')}
+                  </th>
+                )}
+                {col('chg15m') && (
+                  <th className="sortable" onClick={()=>handleHeaderClick('change_15m')}>
+                    15m % {sortKey==='change_15m' && (sortDir==='desc'?'↓':'↑')}
+                  </th>
+                )}
+                {col('chg60m') && (
+                  <th className="sortable hide-md" onClick={()=>handleHeaderClick('change_60m')}>
+                    60m % {sortKey==='change_60m' && (sortDir==='desc'?'↓':'↑')}
+                  </th>
+                )}
+                {col('momentum') && (
+                  <th className="sortable hide-md" onClick={()=>handleHeaderClick('momentum_score')}>
+                    Momentum {sortKey==='momentum_score' && (sortDir==='desc'?'↓':'↑')}
+                  </th>
+                )}
+                {col('mom5m') && <th className="hide-md">Mom 5m</th>}
+                {col('mom15m') && <th className="hide-md">Mom 15m</th>}
+                {col('oi') && (
+                  <th className="sortable hide-sm" onClick={()=>handleHeaderClick('open_interest')}>
+                    OI {sortKey==='open_interest' && (sortDir==='desc'?'↓':'↑')}
+                  </th>
+                )}
+                {col('oi5m') && (
+                  <th className="sortable hide-sm" onClick={()=>handleHeaderClick('oi_change_5m')}>
+                    OI Δ 5m {sortKey==='oi_change_5m' && (sortDir==='desc'?'↓':'↑')}
+                  </th>
+                )}
+                {col('oi15m') && <th className="hide-md">OI Δ 15m</th>}
+                {col('oi1h') && <th className="hide-md">OI Δ 1h</th>}
+                {col('atr') && (
+                  <th className="sortable hide-md" onClick={()=>handleHeaderClick('atr')}>
+                    ATR {sortKey==='atr' && (sortDir==='desc'?'↓':'↑')}
+                  </th>
+                )}
+                {col('volz') && (
+                  <th className="sortable hide-md" onClick={()=>handleHeaderClick('vol_zscore_1m')}>
+                    Vol Z {sortKey==='vol_zscore_1m' && (sortDir==='desc'?'↓':'↑')}
+                  </th>
+                )}
+                {col('vol1m') && <th className="hide-md">Vol 1m</th>}
+                {col('rvol1m') && <th className="hide-md">RVOL 1m</th>}
+                {col('breakout15m') && <th className="hide-md">Breakout 15m</th>}
+                {col('vwap15m') && <th className="hide-md">VWAP 15m</th>}
               </tr>
             </thead>
             <tbody>
@@ -713,27 +863,27 @@ export default function Home() {
                     <span className={"star "+(favs.includes(idOf(r))?'active':'')} onClick={(e)=>{e.stopPropagation(); toggleFav(idOf(r), favs, setFavs)}}>★</span>
                   </td>
                   <td style={{fontWeight:600}}>{r.symbol}</td>
-                  <td className="muted hide-xs">{r.exchange || 'binance'}</td>
-                  <td className={signalClass(r.signal_strength)}>{fmtSignal(r.signal_score, r.signal_strength)}</td>
-                  <td className={'hide-sm'}>{fmtImpulse(r.impulse_score, r.impulse_dir)}</td>
+                  {col('exchange') && <td className="muted hide-xs">{r.exchange || 'binance'}</td>}
+                  {col('signal') && <td className={signalClass(r.signal_strength)}>{fmtSignal(r.signal_score, r.signal_strength)}</td>}
+                  {col('impulse') && <td className={'hide-sm'}>{fmtImpulse(r.impulse_score, r.impulse_dir)}</td>}
                   <td>{fmt(r.last_price)}</td>
-                  <td className={pctClass(r.change_1m) + ' hide-sm'}>{fmtPct(r.change_1m)}</td>
-                  <td className={pctClass(r.change_5m)}>{fmtPct(r.change_5m)}</td>
-                  <td className={pctClass(r.change_15m)}>{fmtPct(r.change_15m)}</td>
-                  <td className={pctClass(r.change_60m) + ' hide-md'}>{fmtPct(r.change_60m)}</td>
-                  <td className={momentumClass(r.momentum_score) + ' hide-md'}>{fmtMomentum(r.momentum_score)}</td>
-                  <td className={pctClass(r.momentum_5m) + ' hide-md'}>{fmtPct(r.momentum_5m)}</td>
-                  <td className={pctClass(r.momentum_15m) + ' hide-md'}>{fmtPct(r.momentum_15m)}</td>
-                  <td className={'hide-sm'}>{fmtOI(r.open_interest)}</td>
-                  <td className={oiClass(r.oi_change_5m) + ' hide-sm'}>{fmtOIPct(r.oi_change_5m)}</td>
-                  <td className={oiClass(r.oi_change_15m) + ' hide-md'}>{fmtOIPct(r.oi_change_15m)}</td>
-                  <td className={oiClass(r.oi_change_1h) + ' hide-md'}>{fmtOIPct(r.oi_change_1h)}</td>
-                  <td className={'hide-md'}>{fmt(r.atr)}</td>
-                  <td className={'hide-md'}>{fmt(r.vol_zscore_1m)}</td>
-                  <td className={'hide-md'}>{fmt(r.vol_1m)}</td>
-                  <td className={'hide-md'}>{fmt(r.rvol_1m)}</td>
-                  <td className={pctClass(r.breakout_15m) + ' hide-md'}>{fmtPct(r.breakout_15m)}</td>
-                  <td className={'hide-md'}>{fmt(r.vwap_15m)}</td>
+                  {col('chg1m') && <td className={pctClass(r.change_1m) + ' hide-sm'}>{fmtPct(r.change_1m)}</td>}
+                  {col('chg5m') && <td className={pctClass(r.change_5m)}>{fmtPct(r.change_5m)}</td>}
+                  {col('chg15m') && <td className={pctClass(r.change_15m)}>{fmtPct(r.change_15m)}</td>}
+                  {col('chg60m') && <td className={pctClass(r.change_60m) + ' hide-md'}>{fmtPct(r.change_60m)}</td>}
+                  {col('momentum') && <td className={momentumClass(r.momentum_score) + ' hide-md'}>{fmtMomentum(r.momentum_score)}</td>}
+                  {col('mom5m') && <td className={pctClass(r.momentum_5m) + ' hide-md'}>{fmtPct(r.momentum_5m)}</td>}
+                  {col('mom15m') && <td className={pctClass(r.momentum_15m) + ' hide-md'}>{fmtPct(r.momentum_15m)}</td>}
+                  {col('oi') && <td className={'hide-sm'}>{fmtOI(r.open_interest)}</td>}
+                  {col('oi5m') && <td className={oiClass(r.oi_change_5m) + ' hide-sm'}>{fmtOIPct(r.oi_change_5m)}</td>}
+                  {col('oi15m') && <td className={oiClass(r.oi_change_15m) + ' hide-md'}>{fmtOIPct(r.oi_change_15m)}</td>}
+                  {col('oi1h') && <td className={oiClass(r.oi_change_1h) + ' hide-md'}>{fmtOIPct(r.oi_change_1h)}</td>}
+                  {col('atr') && <td className={'hide-md'}>{fmt(r.atr)}</td>}
+                  {col('volz') && <td className={'hide-md'}>{fmt(r.vol_zscore_1m)}</td>}
+                  {col('vol1m') && <td className={'hide-md'}>{fmt(r.vol_1m)}</td>}
+                  {col('rvol1m') && <td className={'hide-md'}>{fmt(r.rvol_1m)}</td>}
+                  {col('breakout15m') && <td className={pctClass(r.breakout_15m) + ' hide-md'}>{fmtPct(r.breakout_15m)}</td>}
+                  {col('vwap15m') && <td className={'hide-md'}>{fmt(r.vwap_15m)}</td>}
                 </tr>
               ))}
             </tbody>
@@ -902,20 +1052,10 @@ function DetailsModal({
   };
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0,0,0,0.6)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 9999,
-      }}
-      onClick={onClose}
-    >
-      <div className="panel" style={{ width: 720, maxWidth: '95vw' }} onClick={(e) => e.stopPropagation()}>
-        <div className="toolbar">
+    <div className="modalOverlay" onClick={onClose}>
+      <div className="panel modalSheet" onClick={(e) => e.stopPropagation()}>
+        <div className="toolbar" style={{ position: 'sticky', top: 0, zIndex: 10, background: 'rgba(12,19,30,0.92)', backdropFilter: 'blur(8px)' }}>
+          <div className="modalHandle" />
           <div className="group" style={{ gap: 10, alignItems: 'center' }}>
             <span className="badge">{exchange}</span>
             <strong style={{ fontSize: 16 }}>{symbol}</strong>
@@ -943,7 +1083,7 @@ function DetailsModal({
           </div>
         </div>
 
-        <div style={{ padding: 12, display: 'grid', gridTemplateColumns: '260px 1fr', gap: 12 }}>
+        <div className="detailsGrid" style={{ padding: 12, display: 'grid', gridTemplateColumns: '260px 1fr', gap: 12 }}>
           <div>
             <div className="badge" style={{ display: 'inline-block', marginBottom: 8 }}>
               Last: {fmt(row.last_price)}
