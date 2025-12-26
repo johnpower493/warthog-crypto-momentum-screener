@@ -100,6 +100,11 @@ export default function Home() {
   const [rows, setRows] = useState<Metric[]>([]);
   const [showAlerts, setShowAlerts] = useState<boolean>(false);
   const [alertLog, setAlertLog] = useState<{ts:number; text:string}[]>([]);
+
+  // Avoid SSR/CSR hydration mismatches by resolving host-based URLs client-side
+  const [resolvedBackendHttp, setResolvedBackendHttp] = useState<string>(process.env.NEXT_PUBLIC_BACKEND_HTTP || '');
+  const [resolvedWsUrl, setResolvedWsUrl] = useState<string>(process.env.NEXT_PUBLIC_BACKEND_WS || '');
+  const [isClient, setIsClient] = useState(false);
   const binState = useRef<Map<string, Metric>>(new Map());
   const httpState = useRef<Map<string, Metric>>(new Map());
   const [modal, setModal] = useState<{
@@ -143,9 +148,7 @@ export default function Home() {
     }
   };
   const [onlyFavs, setOnlyFavs] = useState(false);
-  const [favs, setFavs] = useState<string[]>(() => {
-    try{ return JSON.parse(localStorage.getItem('favs')||'[]'); }catch{return []}
-  });
+  const [favs, setFavs] = useState<string[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const [status, setStatus] = useState<'disconnected'|'connecting'|'connected'>('connecting');
   const [source, setSource] = useState<'ws'|'http'>('ws');
@@ -196,23 +199,9 @@ export default function Home() {
     columnMeta.map((c) => [c.key, c.mobileDefault])
   );
   const [showColumns, setShowColumns] = useState(false);
-  const [mobileMode, setMobileMode] = useState<boolean>(() => {
-    try {
-      const raw = localStorage.getItem('mobileMode');
-      return raw ? JSON.parse(raw) : true;
-    } catch {
-      return true;
-    }
-  });
+  const [mobileMode, setMobileMode] = useState<boolean>(true);
 
-  const [cols, setCols] = useState<Record<string, boolean>>(() => {
-    try {
-      const raw = localStorage.getItem('cols');
-      return raw ? { ...defaultCols, ...JSON.parse(raw) } : defaultCols;
-    } catch {
-      return defaultCols;
-    }
-  });
+  const [cols, setCols] = useState<Record<string, boolean>>(defaultCols);
 
   useEffect(() => {
     try { localStorage.setItem('cols', JSON.stringify(cols)); } catch {}
@@ -242,22 +231,44 @@ export default function Home() {
   const col = (k: string) => !!cols[k];
 
   useEffect(() => {
+    // Resolve URLs + hydrate persisted state from localStorage (client-only)
+    setIsClient(true);
+    try {
+      const backendHttp = process.env.NEXT_PUBLIC_BACKEND_HTTP || `${window.location.protocol}//${window.location.hostname}:8000`;
+      setResolvedBackendHttp(backendHttp);
+    } catch {}
+
+    try {
+      const override = new URL(window.location.href).searchParams.get('ws') || undefined;
+      const envUrl = process.env.NEXT_PUBLIC_BACKEND_WS;
+      const defaultWs = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:8000/ws/screener`;
+      setResolvedWsUrl(override || envUrl || defaultWs);
+    } catch {}
+
+    try {
+      const storedFavs = JSON.parse(localStorage.getItem('favs') || '[]') as string[];
+      setFavs(Array.isArray(storedFavs) ? storedFavs : []);
+    } catch {}
+
+    try {
+      const rawCols = localStorage.getItem('cols');
+      if (rawCols) setCols((prev) => ({ ...prev, ...JSON.parse(rawCols) }));
+    } catch {}
+
+    try {
+      const rawMm = localStorage.getItem('mobileMode');
+      if (rawMm) setMobileMode(!!JSON.parse(rawMm));
+    } catch {}
+  }, []);
+
+  useEffect(() => {
     // persist favorites
-    localStorage.setItem('favs', JSON.stringify(favs));
+    try { localStorage.setItem('favs', JSON.stringify(favs)); } catch {}
   }, [favs]);
 
   useEffect(() => {
-    const override = new URL(location.href).searchParams.get('ws') || undefined;
-    const envUrl = process.env.NEXT_PUBLIC_BACKEND_WS;
-    const defaultWs = (typeof window !== 'undefined')
-      ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:8000/ws/screener`
-      : 'ws://localhost:8000/ws/screener';
-    const url = override || envUrl || defaultWs;
-
-    const backendHttp =
-    process.env.NEXT_PUBLIC_BACKEND_HTTP ||
-    (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}:8000` : 'http://127.0.0.1:8000');
-
+    const url = resolvedWsUrl || 'ws://localhost:8000/ws/screener';
+    const backendHttp = resolvedBackendHttp || 'http://127.0.0.1:8000';
     let cancelled = false;
     let ws: WebSocket | null = null;
     let attempt = 0;
@@ -890,7 +901,7 @@ export default function Home() {
           </table>
         </div>
         <div className="footer">
-          <div>WS: <code>{process.env.NEXT_PUBLIC_BACKEND_WS || (typeof window !== 'undefined' ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:8000/ws/screener` : 'ws://localhost:8000/ws/screener')}</code></div>
+          <div>WS: <code suppressHydrationWarning>{isClient ? (resolvedWsUrl || '—') : '—'}</code></div>
           <div className="muted">Last update: {lastUpdate? new Date(lastUpdate).toLocaleTimeString(): '—'}</div>
         </div>
       </div>

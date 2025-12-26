@@ -12,9 +12,16 @@ type AlertRow = {
 };
 
 export default function AlertsPage() {
-  const backendHttp =
-    process.env.NEXT_PUBLIC_BACKEND_HTTP ||
-    (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}:8000` : 'http://127.0.0.1:8000');
+  const [backendHttp, setBackendHttp] = useState<string>(process.env.NEXT_PUBLIC_BACKEND_HTTP || '');
+  const [isClient, setIsClient] = useState(false);
+
+  useEffect(() => {
+    setIsClient(true);
+    try {
+      const resolved = process.env.NEXT_PUBLIC_BACKEND_HTTP || `${window.location.protocol}//${window.location.hostname}:8000`;
+      setBackendHttp(resolved);
+    } catch {}
+  }, []);
 
   const [rows, setRows] = useState<AlertRow[]>([]);
   const [status, setStatus] = useState<'idle'|'loading'|'error'>('idle');
@@ -26,7 +33,7 @@ export default function AlertsPage() {
   const load = async () => {
     setStatus('loading');
     try {
-      const url = new URL(backendHttp + '/meta/alerts');
+      const url = new URL((backendHttp || 'http://127.0.0.1:8000') + '/meta/alerts');
       url.searchParams.set('limit', '500');
       if (exchange !== 'all') url.searchParams.set('exchange', exchange);
       const resp = await fetch(url.toString());
