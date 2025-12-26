@@ -62,6 +62,15 @@ class Aggregator:
 
     def build_snapshot(self) -> ScreenerSnapshot:
         metrics = [st.compute_metrics() for st in self._states.values()]
+        # Enrich with liquidity ranks/cohort
+        try:
+            from .universe_provider import compute_liquidity_ranks
+            ranks, top = compute_liquidity_ranks(self.exchange, metrics)
+            for m in metrics:
+                m.liquidity_rank = ranks.get(m.symbol)
+                m.liquidity_top200 = m.symbol in top
+        except Exception:
+            pass
         snap = ScreenerSnapshot(exchange=self.exchange, ts=max((m.ts for m in metrics), default=0), metrics=metrics)
         try:
             import logging
@@ -90,6 +99,61 @@ class Aggregator:
         payload = snap.model_dump_json()
         try:
             self.last_emit_ts = int(__import__('time').time()*1000)
+        except Exception:
+            pass
+        # Persist alerts + trade plans, then fire notifications
+        try:
+            from ..config import TRADEPLAN_ENABLE
+            if TRADEPLAN_ENABLE:
+                from .trade_plan import build_trade_plan
+                from .alert_store import insert_alert, insert_trade_plan
+                from .ohlc_store import get_recent
+                import json
+                from ..config import TRADEPLAN_SWING_LOOKBACK_15M
+                for m in snap.metrics:
+                    if not (m.cipher_buy is True or m.cipher_sell is True):
+                        continue
+                    side = "BUY" if m.cipher_buy else "SELL"
+                    # get 15m structure from store
+                    rows15 = get_recent(m.exchange, m.symbol, '15m', limit=TRADEPLAN_SWING_LOOKBACK_15M)
+                    highs = [float(r[3]) for r in rows15] if rows15 else []
+                    lows = [float(r[4]) for r in rows15] if rows15 else []
+                    swing_high = max(highs) if highs else None
+                    swing_low = min(lows) if lows else None
+                    plan = build_trade_plan(side=side, entry_price=float(m.last_price), atr=m.atr, swing_high_15m=swing_high, swing_low_15m=swing_low)
+                    alert_id = insert_alert(
+                        ts=int(m.ts),
+                        exchange=m.exchange,
+                        symbol=m.symbol,
+                        signal=side,
+                        source_tf=m.cipher_source_tf,
+                        price=float(m.last_price),
+                        reason=m.cipher_reason,
+                        metrics=m.model_dump(),
+                        created_ts=int(__import__('time').time() * 1000),
+                    )
+                    if alert_id:
+                        insert_trade_plan(
+                            alert_id=alert_id,
+                            ts=int(m.ts),
+                            exchange=m.exchange,
+                            symbol=m.symbol,
+                            side=side,
+                            entry_type=plan.entry_type,
+                            entry_price=plan.entry_price,
+                            stop_loss=plan.stop_loss,
+                            tp1=plan.tp1,
+                            tp2=plan.tp2,
+                            tp3=plan.tp3,
+                            atr=plan.atr,
+                            atr_mult=plan.atr_mult,
+                            swing_ref=plan.swing_ref,
+                            risk_per_unit=plan.risk_per_unit,
+                            rr_tp1=plan.rr_tp1,
+                            rr_tp2=plan.rr_tp2,
+                            rr_tp3=plan.rr_tp3,
+                            plan=plan.plan_json,
+                        )
         except Exception:
             pass
         # Fire alerts (non-blocking best-effort)

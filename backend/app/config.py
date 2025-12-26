@@ -32,6 +32,25 @@ WS_HEARTBEAT_SEC = float(os.getenv("WS_HEARTBEAT_SEC", "30"))  # periodic WS sna
 CIPHERB_OS_LEVEL = float(os.getenv("CIPHERB_OS_LEVEL", "-40"))
 CIPHERB_OB_LEVEL = float(os.getenv("CIPHERB_OB_LEVEL", "40"))
 
+# Liquidity cohorting
+LIQ_TOP_N = int(os.getenv("LIQ_TOP_N", "200"))
+# weights for turnover, open interest, recent activity
+LIQ_WEIGHTS = (
+    float(os.getenv("LIQ_W_TURNOVER", "0.6")),
+    float(os.getenv("LIQ_W_OI", "0.3")),
+    float(os.getenv("LIQ_W_ACTIVITY", "0.1")),
+)
+
+# Trade plan generation
+TRADEPLAN_ATR_MULT = float(os.getenv("TRADEPLAN_ATR_MULT", "2.0"))
+TRADEPLAN_SWING_LOOKBACK_15M = int(os.getenv("TRADEPLAN_SWING_LOOKBACK_15M", "24"))  # last 24 x 15m candles (~6h)
+TRADEPLAN_TP_R_MULTS = (
+    float(os.getenv("TRADEPLAN_TP1_R", "1.0")),
+    float(os.getenv("TRADEPLAN_TP2_R", "2.0")),
+    float(os.getenv("TRADEPLAN_TP3_R", "3.0")),
+)
+TRADEPLAN_ENABLE = os.getenv("TRADEPLAN_ENABLE", "true").lower() in {"1","true","yes"}
+
 # Optional periodic "full refresh" (restart streams + backfill + refetch OI) aligned to 5m boundaries
 ENABLE_FULL_REFRESH_5M = os.getenv("ENABLE_FULL_REFRESH_5M", "false").lower() in {"1", "true", "yes"}
 FULL_REFRESH_BACKFILL_LIMIT = int(os.getenv("FULL_REFRESH_BACKFILL_LIMIT", "200"))
@@ -56,5 +75,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 ALERT_DEDUP_MIN_MS = int(os.getenv("ALERT_DEDUP_MIN_MS", "60000"))  # 1 minute default
-ALERT_COOLDOWN_PER_SYMBOL_MS = int(os.getenv("ALERT_COOLDOWN_PER_SYMBOL_MS", "300000"))  # 5 min per symbol
+ALERT_COOLDOWN_PER_SYMBOL_MS = int(os.getenv("ALERT_COOLDOWN_PER_SYMBOL_MS", "300000"))  # legacy/global fallback
+ALERT_COOLDOWN_TOP_MS = int(os.getenv("ALERT_COOLDOWN_TOP_MS", "120000"))  # 2 min for Top 200
+ALERT_COOLDOWN_SMALL_MS = int(os.getenv("ALERT_COOLDOWN_SMALL_MS", "300000"))  # 5 min for Small Caps
 ALERT_INCLUDE_EXPLANATION = os.getenv("ALERT_INCLUDE_EXPLANATION", "true").lower() in {"1","true","yes"}

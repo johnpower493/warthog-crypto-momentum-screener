@@ -294,30 +294,159 @@ async def debug_history(exchange: str, symbol: str, limit: int = 60):
         data = []
     return {"exchange": exchange, "symbol": symbol, "limit": limit, "closes": data}
 
+
+@app.get("/meta/alerts")
+async def meta_alerts(exchange: str | None = None, limit: int = 200):
+    from .services.alert_store import get_recent_alerts
+    return {"exchange": exchange or "all", "limit": limit, "alerts": get_recent_alerts(exchange=exchange, limit=limit)}
+
+
+@app.get("/meta/trade_plan")
+async def meta_trade_plan(exchange: str, symbol: str):
+    from .services.alert_store import get_latest_trade_plan
+    plan = get_latest_trade_plan(exchange, symbol)
+    return {"exchange": exchange, "symbol": symbol, "plan": plan}
+
+
+@app.post("/meta/backtest/run")
+async def meta_backtest_run(exchange: str, symbol: str, window_days: int = 30):
+    """Run backtest for a symbol and persist results."""
+    from .services.backtester import backtest_symbol
+    from .services.backtester import _insert_backtest_row  # type: ignore
+    res = backtest_symbol(exchange, symbol, window_days)
+    _insert_backtest_row(
+        exchange=exchange,
+        symbol=symbol,
+        source_tf=None,
+        window_days=window_days,
+        n_trades=int(res.get('n_trades', 0)),
+        win_rate=res.get('win_rate'),
+        avg_r=res.get('avg_r'),
+        avg_mae_r=res.get('avg_mae_r'),
+        avg_mfe_r=res.get('avg_mfe_r'),
+        avg_bars_to_resolve=res.get('avg_bars_to_resolve'),
+        results_json=res,
+    )
+    return {"exchange": exchange, "symbol": symbol, "window_days": window_days, "result": res}
+
+
+@app.get("/meta/backtest")
+async def meta_backtest(exchange: str, symbol: str, window_days: int = 30):
+    from .services.ohlc_store import init_db
+    from .services.ohlc_store import _DB_LOCK, _CONN  # type: ignore
+    from .services.backtester import STRATEGY_VERSION
+    init_db()
+    with _DB_LOCK:
+        cur = _CONN.execute(
+            """
+            SELECT ts, n_trades, win_rate, avg_r, avg_mae_r, avg_mfe_r, avg_bars_to_resolve, results_json
+            FROM backtest_results
+            WHERE exchange=? AND symbol=? AND window_days=? AND strategy_version=?
+            """,
+            (exchange, symbol, window_days, STRATEGY_VERSION),
+        )
+        row = cur.fetchone()
+    if not row:
+        return {"exchange": exchange, "symbol": symbol, "window_days": window_days, "strategy_version": STRATEGY_VERSION, "result": None}
+    import json
+    return {
+        "exchange": exchange,
+        "symbol": symbol,
+        "window_days": window_days,
+        "strategy_version": STRATEGY_VERSION,
+        "ts": row[0],
+        "n_trades": row[1],
+        "win_rate": row[2],
+        "avg_r": row[3],
+        "avg_mae_r": row[4],
+        "avg_mfe_r": row[5],
+        "avg_bars_to_resolve": row[6],
+        "result": json.loads(row[7]) if row[7] else None,
+    }
+
+
+@app.get("/meta/sentiment")
+async def meta_sentiment(exchange: str | None = None, window_minutes: int = 240):
+    """Aggregate BUY/SELL counts over a rolling window (default 4h) from the persisted alerts table."""
+    import time
+    from .services.ohlc_store import init_db
+    from .services.ohlc_store import _DB_LOCK, _CONN  # type: ignore
+    init_db()
+    since_ts = int(time.time() * 1000) - int(window_minutes * 60 * 1000)
+
+    params = [since_ts]
+    where = "WHERE created_ts >= ?"
+    if exchange:
+        where += " AND exchange = ?"
+        params.append(exchange)
+
+    with _DB_LOCK:
+        cur = _CONN.execute(
+            f"""
+            SELECT signal, COUNT(*)
+            FROM alerts
+            {where}
+            GROUP BY signal
+            """,
+            tuple(params),
+        )
+        rows = cur.fetchall()
+
+    counts = {"BUY": 0, "SELL": 0}
+    for sig, c in rows:
+        if sig in counts:
+            counts[sig] = int(c)
+
+    total = counts["BUY"] + counts["SELL"]
+    # score in [-1, +1]
+    score = ((counts["BUY"] - counts["SELL"]) / total) if total else 0.0
+    bias = "bullish" if score > 0.1 else "bearish" if score < -0.1 else "neutral"
+
+    return {
+        "exchange": exchange or "all",
+        "window_minutes": window_minutes,
+        "since_ts": since_ts,
+        "buy": counts["BUY"],
+        "sell": counts["SELL"],
+        "total": total,
+        "score": score,
+        "bias": bias,
+    }
+
 @app.websocket("/ws/screener")
 async def ws_screener(ws: WebSocket):
     await ws.accept()
     import logging
-    logging.getLogger(__name__).info("WS client connected")
+    log = logging.getLogger(__name__)
+    log.info("WS client connected")
     q = await stream_mgr.subscribe()
-    # Send current snapshot immediately (may be empty)
+
     async def send_latest():
+        payload = stream_mgr.agg._build_snapshot_payload()  # type: ignore[attr-defined]
+        await ws.send_text(payload)
+
+    # initial send (guarded)
+    try:
+        await send_latest()
+    except Exception:
         try:
-            payload = stream_mgr.agg._build_snapshot_payload()  # type: ignore[attr-defined]
-            await ws.send_text(payload)
+            await stream_mgr.agg.unsubscribe(q)  # type: ignore[attr-defined]
         except Exception:
             pass
-    await send_latest()
-    # periodic heartbeat using WS_HEARTBEAT_SEC
+        return
+
     from .config import WS_HEARTBEAT_SEC
     periodic = asyncio.create_task(_periodic_sender(ws, send_latest, WS_HEARTBEAT_SEC))
+    ping_task = asyncio.create_task(_pinger(ws))
     try:
-        ping_task = asyncio.create_task(_pinger(ws))
         while True:
             payload = await q.get()
-            await ws.send_text(payload)
+            try:
+                await ws.send_text(payload)
+            except Exception:
+                break
     except WebSocketDisconnect:
-        logging.getLogger(__name__).info("WS client disconnected")
+        log.info("WS client disconnected")
     finally:
         ping_task.cancel()
         periodic.cancel()
@@ -330,24 +459,36 @@ async def ws_screener(ws: WebSocket):
 async def ws_screener_bybit(ws: WebSocket):
     await ws.accept()
     import logging
-    logging.getLogger(__name__).info("WS client connected (bybit)")
+    log = logging.getLogger(__name__)
+    log.info("WS client connected (bybit)")
     q = await stream_mgr.subscribe_bybit()
+
     async def send_latest():
+        payload = stream_mgr.agg_bybit._build_snapshot_payload()  # type: ignore[attr-defined]
+        await ws.send_text(payload)
+
+    # initial send (guarded)
+    try:
+        await send_latest()
+    except Exception:
         try:
-            payload = stream_mgr.agg_bybit._build_snapshot_payload()  # type: ignore[attr-defined]
-            await ws.send_text(payload)
+            await stream_mgr.agg_bybit.unsubscribe(q)  # type: ignore[attr-defined]
         except Exception:
             pass
-    await send_latest()
+        return
+
     from .config import WS_HEARTBEAT_SEC
     periodic = asyncio.create_task(_periodic_sender(ws, send_latest, WS_HEARTBEAT_SEC))
+    ping_task = asyncio.create_task(_pinger(ws))
     try:
-        ping_task = asyncio.create_task(_pinger(ws))
         while True:
             payload = await q.get()
-            await ws.send_text(payload)
+            try:
+                await ws.send_text(payload)
+            except Exception:
+                break
     except WebSocketDisconnect:
-        logging.getLogger(__name__).info("WS client disconnected (bybit)")
+        log.info("WS client disconnected (bybit)")
     finally:
         ping_task.cancel()
         periodic.cancel()
@@ -369,7 +510,7 @@ async def ws_screener_all(ws: WebSocket):
     except Exception as e:
         log.warning(f"subscribe_bybit failed; continuing with Binance only: {e}")
 
-    async def send_combined():
+    async def build_combined_snapshot():
         try:
             snap_bin = stream_mgr.agg.build_snapshot()  # type: ignore[attr-defined]
         except Exception:
@@ -386,25 +527,51 @@ async def ws_screener_all(ws: WebSocket):
         if snap_byb:
             metrics.extend(snap_byb.metrics)
             ts = max(ts, snap_byb.ts)
-        payload = ScreenerSnapshot(exchange="all", ts=ts, metrics=metrics).model_dump_json()
+        return ScreenerSnapshot(exchange="all", ts=ts, metrics=metrics)
+
+    async def send_combined():
+        snap = await build_combined_snapshot()
+        payload = snap.model_dump_json()
         try:
-            log.debug(f"/ws/screener/all sending {len(metrics)} metrics")
+            log.debug(f"/ws/screener/all sending {len(snap.metrics)} metrics")
         except Exception:
             pass
         await ws.send_text(payload)
 
-    # initial
+    # readiness wait: give bybit a brief window to populate before first send
+    async def readiness_wait(timeout_s: float = 3.0):
+        start = asyncio.get_event_loop().time()
+        while True:
+            snap = await build_combined_snapshot()
+            has_bin = any((m.exchange or '').lower() == 'binance' for m in snap.metrics)
+            has_byb = any((m.exchange or '').lower() == 'bybit' for m in snap.metrics)
+            if has_bin and has_byb:
+                return
+            if (asyncio.get_event_loop().time() - start) > timeout_s:
+                return
+            await asyncio.sleep(0.2)
+
     try:
+        await readiness_wait()
         await send_combined()
     except Exception:
-        pass
+        try:
+            await send_combined()
+        except Exception:
+            # if even this fails, close out
+            try:
+                await stream_mgr.agg.unsubscribe(q_bin)  # type: ignore[attr-defined]
+                if q_byb is not None:
+                    await stream_mgr.agg_bybit.unsubscribe(q_byb)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            return
 
-    # periodic heartbeat snapshot every WS_HEARTBEAT_SEC
     from .config import WS_HEARTBEAT_SEC
     periodic = asyncio.create_task(_periodic_sender(ws, send_combined, WS_HEARTBEAT_SEC))
 
+    ping_task = asyncio.create_task(_pinger(ws))
     try:
-        ping_task = asyncio.create_task(_pinger(ws))
         while True:
             tasks = {asyncio.create_task(q_bin.get())}
             if q_byb is not None:
@@ -412,7 +579,10 @@ async def ws_screener_all(ws: WebSocket):
             done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for t in pending:
                 t.cancel()
-            await send_combined()
+            try:
+                await send_combined()
+            except Exception:
+                break
     except WebSocketDisconnect:
         log.info("WS client disconnected (all)")
     finally:

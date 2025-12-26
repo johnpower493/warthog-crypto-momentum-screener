@@ -50,6 +50,35 @@ type Snapshot = {
   metrics: Metric[];
 };
 
+type TradePlan = {
+  id: number;
+  ts: number;
+  side: string;
+  entry_type: string;
+  entry_price: number;
+  stop_loss: number;
+  tp1?: number | null;
+  tp2?: number | null;
+  tp3?: number | null;
+  atr?: number | null;
+  atr_mult?: number | null;
+  swing_ref?: number | null;
+  risk_per_unit?: number | null;
+  rr_tp1?: number | null;
+  rr_tp2?: number | null;
+  rr_tp3?: number | null;
+};
+
+type Backtest = {
+  window_days: number;
+  n_trades: number;
+  win_rate: number;
+  avg_r: number;
+  avg_mae_r: number;
+  avg_mfe_r: number;
+  avg_bars_to_resolve: number;
+};
+
 type SortKey =
   | 'change_1m'
   | 'change_5m'
@@ -78,6 +107,9 @@ export default function Home() {
     row?: Metric;
     closes?: number[];
     loading?: boolean;
+    plan?: TradePlan | null;
+    bt30?: any;
+    bt90?: any;
   }>({ open: false });
   const [query, setQuery] = useState('');
 
@@ -127,6 +159,10 @@ export default function Home() {
     bybitKline: 0,
   });
 
+  const [sentiment, setSentiment] = useState<{buy:number; sell:number; total:number; score:number; bias:string} | null>(null);
+  const [sentimentBinance, setSentimentBinance] = useState<{buy:number; sell:number; total:number; score:number; bias:string} | null>(null);
+  const [sentimentBybit, setSentimentBybit] = useState<{buy:number; sell:number; total:number; score:number; bias:string} | null>(null);
+
   useEffect(() => {
     // persist favorites
     localStorage.setItem('favs', JSON.stringify(favs));
@@ -135,9 +171,14 @@ export default function Home() {
   useEffect(() => {
     const override = new URL(location.href).searchParams.get('ws') || undefined;
     const envUrl = process.env.NEXT_PUBLIC_BACKEND_WS;
-    const url = override || envUrl || 'ws://localhost:8000/ws/screener';
+    const defaultWs = (typeof window !== 'undefined')
+      ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:8000/ws/screener`
+      : 'ws://localhost:8000/ws/screener';
+    const url = override || envUrl || defaultWs;
 
-    const backendHttp = process.env.NEXT_PUBLIC_BACKEND_HTTP || 'http://127.0.0.1:8000';
+    const backendHttp =
+    process.env.NEXT_PUBLIC_BACKEND_HTTP ||
+    (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}:8000` : 'http://127.0.0.1:8000');
 
     let cancelled = false;
     let ws: WebSocket | null = null;
@@ -175,16 +216,29 @@ export default function Home() {
     async function pollStatusOnce() {
       try {
         const resp = await fetch(backendHttp + '/debug/status');
-        if (!resp.ok) return;
-        const j = await resp.json();
-        const b = j.binance?.stale || {};
-        const y = j.bybit?.stale || {};
-        setStaleCount({
-          binanceTicker: b.ticker_count || 0,
-          binanceKline: b.kline_count || 0,
-          bybitTicker: y.ticker_count || 0,
-          bybitKline: y.kline_count || 0,
-        });
+        if (resp.ok) {
+          const j = await resp.json();
+          const b = j.binance?.stale || {};
+          const y = j.bybit?.stale || {};
+          setStaleCount({
+            binanceTicker: b.ticker_count || 0,
+            binanceKline: b.kline_count || 0,
+            bybitTicker: y.ticker_count || 0,
+            bybitKline: y.kline_count || 0,
+          });
+        }
+      } catch {}
+
+      // sentiment (4h) - best effort
+      try {
+        const [allResp, bResp, yResp] = await Promise.all([
+          fetch(backendHttp + '/meta/sentiment'),
+          fetch(backendHttp + '/meta/sentiment?exchange=binance'),
+          fetch(backendHttp + '/meta/sentiment?exchange=bybit'),
+        ]);
+        if (allResp.ok) setSentiment(await allResp.json());
+        if (bResp.ok) setSentimentBinance(await bResp.json());
+        if (yResp.ok) setSentimentBybit(await yResp.json());
       } catch {}
     }
 
@@ -348,15 +402,30 @@ export default function Home() {
     const exchange = r.exchange || 'binance';
     const backendBase = process.env.NEXT_PUBLIC_BACKEND_HTTP || 'http://127.0.0.1:8000';
 
-    // Show modal immediately with row data; load history async
-    setModal({ open: true, row: r, closes: [], loading: true });
+    // Show modal immediately with row data; load history + plan + backtests async
+    setModal({ open: true, row: r, closes: [], loading: true, plan: null, bt30: null, bt90: null });
 
     try {
-      const resp = await fetch(
-        `${backendBase}/debug/history?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&limit=60`
-      );
-      const j = await resp.json();
-      setModal((m) => ({ ...m, open: true, row: r, closes: j.closes || [], loading: false }));
+      const [histResp, planResp, bt30Resp, bt90Resp] = await Promise.all([
+        fetch(`${backendBase}/debug/history?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&limit=60`),
+        fetch(`${backendBase}/meta/trade_plan?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}`),
+        fetch(`${backendBase}/meta/backtest?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&window_days=30`),
+        fetch(`${backendBase}/meta/backtest?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&window_days=90`),
+      ]);
+      const j = histResp.ok ? await histResp.json() : { closes: [] };
+      const p = planResp.ok ? await planResp.json() : { plan: null };
+      const b30 = bt30Resp.ok ? await bt30Resp.json() : null;
+      const b90 = bt90Resp.ok ? await bt90Resp.json() : null;
+      setModal((m) => ({
+        ...m,
+        open: true,
+        row: r,
+        closes: j.closes || [],
+        plan: p.plan || null,
+        bt30: b30 && b30.result ? ({ window_days: 30, ...b30 } as any) : null,
+        bt90: b90 && b90.result ? ({ window_days: 90, ...b90 } as any) : null,
+        loading: false,
+      }));
     } catch (e) {
       setModal((m) => ({ ...m, open: true, row: r, closes: [], loading: false }));
     }
@@ -456,6 +525,12 @@ export default function Home() {
             <span className="badge" title="Stale symbol counts (ticker/kline)">
               Stale B(t/k): {staleCount.binanceTicker}/{staleCount.binanceKline} · Y(t/k): {staleCount.bybitTicker}/{staleCount.bybitKline}
             </span>
+            <span className="badge" title="4h Cipher alert sentiment (BUY vs SELL counts)">
+              4h Sentiment: {sentiment ? `${sentiment.bias} (${sentiment.buy}/${sentiment.sell})` : '—'}
+            </span>
+            <span className="badge" title="4h sentiment by exchange">
+              B: {sentimentBinance ? `${sentimentBinance.bias} (${sentimentBinance.buy}/${sentimentBinance.sell})` : '—'} · Y: {sentimentBybit ? `${sentimentBybit.bias} (${sentimentBybit.buy}/${sentimentBybit.sell})` : '—'}
+            </span>
             <button
               className="button"
               onClick={async ()=>{
@@ -476,6 +551,9 @@ export default function Home() {
             <button className={"button "+(showAlerts? 'buttonActive':'')} onClick={()=>setShowAlerts(v=>!v)} title="Toggle Alert Log">
               Alerts
             </button>
+            <a className="button" href="/alerts" title="View persisted alerts history">
+              History
+            </a>
           </div>
         </div>
 
@@ -662,7 +740,7 @@ export default function Home() {
           </table>
         </div>
         <div className="footer">
-          <div>WS: <code>{process.env.NEXT_PUBLIC_BACKEND_WS || 'ws://localhost:8000/ws/screener'}</code></div>
+          <div>WS: <code>{process.env.NEXT_PUBLIC_BACKEND_WS || (typeof window !== 'undefined' ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:8000/ws/screener` : 'ws://localhost:8000/ws/screener')}</code></div>
           <div className="muted">Last update: {lastUpdate? new Date(lastUpdate).toLocaleTimeString(): '—'}</div>
         </div>
       </div>
@@ -694,6 +772,9 @@ export default function Home() {
           row={modal.row}
           closes={modal.closes || []}
           loading={!!modal.loading}
+          plan={modal.plan || null}
+          bt30={modal.bt30 || null}
+          bt90={modal.bt90 || null}
           isFav={favs.includes(idOf(modal.row))}
           onToggleFav={() => toggleFav(idOf(modal.row!), favs, setFavs)}
           onClose={() => setModal({ open: false })}
@@ -758,6 +839,9 @@ function DetailsModal({
   row,
   closes,
   loading,
+  plan,
+  bt30,
+  bt90,
   isFav,
   onToggleFav,
   onClose,
@@ -766,6 +850,9 @@ function DetailsModal({
   row: Metric;
   closes: number[];
   loading: boolean;
+  plan: TradePlan | null;
+  bt30: any;
+  bt90: any;
   isFav: boolean;
   onToggleFav: () => void;
   onClose: () => void;
@@ -885,6 +972,37 @@ function DetailsModal({
               Last 60 x 1m closes {loading ? '(loading...)' : ''}
             </div>
             <Sparkline data={closes || []} />
+
+            <div style={{ marginTop: 12 }}>
+              <div className="muted" style={{ marginBottom: 6 }}>Trade Plan</div>
+              {!plan && <div className="muted">No plan yet.</div>}
+              {plan && (
+                <div className="card" style={{ padding: 10 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                    <Stat label="Side" value={String(plan.side)} className="muted" />
+                    <Stat label="Entry" value={fmt(plan.entry_price)} className="muted" />
+                    <Stat label="Stop" value={fmt(plan.stop_loss)} className="chgDown" />
+                    <Stat label="TP1" value={fmt(plan.tp1)} className="chgUp" />
+                    <Stat label="TP2" value={fmt(plan.tp2)} className="chgUp" />
+                    <Stat label="TP3" value={fmt(plan.tp3)} className="chgUp" />
+                    <Stat label="ATR" value={fmt(plan.atr)} className="muted" />
+                    <Stat label="ATR Mult" value={plan.atr_mult!=null ? String(plan.atr_mult) : '-'} className="muted" />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div style={{ marginTop: 12 }}>
+              <div className="muted" style={{ marginBottom: 6 }}>Recent Performance</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <Stat label="30d Trades" value={bt30?.n_trades!=null ? String(bt30.n_trades) : '-'} className="muted" />
+                <Stat label="30d Win%" value={bt30?.win_rate!=null ? (bt30.win_rate*100).toFixed(1)+'%' : '-'} className="muted" />
+                <Stat label="30d Avg R" value={bt30?.avg_r!=null ? Number(bt30.avg_r).toFixed(2) : '-'} className="muted" />
+                <Stat label="90d Trades" value={bt90?.n_trades!=null ? String(bt90.n_trades) : '-'} className="muted" />
+                <Stat label="90d Win%" value={bt90?.win_rate!=null ? (bt90.win_rate*100).toFixed(1)+'%' : '-'} className="muted" />
+                <Stat label="90d Avg R" value={bt90?.avg_r!=null ? Number(bt90.avg_r).toFixed(2) : '-'} className="muted" />
+              </div>
+            </div>
           </div>
         </div>
       </div>

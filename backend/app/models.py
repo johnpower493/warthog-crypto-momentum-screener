@@ -29,6 +29,10 @@ class SymbolMetrics(BaseModel):
     cipher_source_tf: Optional[str] = None  # '15m' | '4h' indicating which timeframe triggered
     cipher_reason: Optional[str] = None  # human-readable explanation for the signal
 
+    # Liquidity cohorting
+    liquidity_rank: Optional[int] = None
+    liquidity_top200: Optional[bool] = None
+
     # Scalping impulse
     impulse_score: Optional[float] = None  # 0..100 (higher = more impulsive)
     impulse_dir: Optional[int] = None  # -1, 0, +1 direction based on 1m change

@@ -83,7 +83,14 @@ export default function BybitPage() {
     async function connectLoop() {
       const defaultUrl = 'ws://localhost:8000/ws/screener/bybit';
       const base = process.env.NEXT_PUBLIC_BACKEND_WS || defaultUrl;
-      const url = base.replace('/ws/screener', '/ws/screener/bybit');
+      let url: string;
+      if (base.includes('/ws/screener/bybit')) {
+        url = base;
+      } else if (base.includes('/ws/screener')) {
+        url = base.replace('/ws/screener', '/ws/screener/bybit');
+      } else {
+        url = (base.endsWith('/') ? base.slice(0, -1) : base) + '/ws/screener/bybit';
+      }
 
       while (!cancelled) {
         setStatus('connecting');
