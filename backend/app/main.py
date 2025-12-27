@@ -295,6 +295,17 @@ async def debug_history(exchange: str, symbol: str, limit: int = 60):
     return {"exchange": exchange, "symbol": symbol, "limit": limit, "closes": data}
 
 
+@app.get("/debug/oi_history")
+async def debug_oi_history(exchange: str, symbol: str, limit: int = 60):
+    if exchange == 'binance':
+        data = stream_mgr.agg.get_oi_history(symbol, limit)  # type: ignore[attr-defined]
+    elif exchange == 'bybit':
+        data = stream_mgr.agg_bybit.get_oi_history(symbol, limit)  # type: ignore[attr-defined]
+    else:
+        data = []
+    return {"exchange": exchange, "symbol": symbol, "limit": limit, "oi": data}
+
+
 @app.get("/meta/alerts")
 async def meta_alerts(exchange: str | None = None, limit: int = 200):
     from .services.alert_store import get_recent_alerts

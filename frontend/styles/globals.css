@@ -83,8 +83,12 @@ a{color:inherit}
 
 .modalHandle{display:none;}
 
+.chartsGrid{grid-template-columns: repeat(2, minmax(0, 1fr)) !important;}
+
+
 @media (max-width: 720px){
   .detailsGrid{grid-template-columns: 1fr !important;}
+  .chartsGrid{grid-template-columns: 1fr !important;}
   .modalOverlay{
     align-items: flex-end;
     justify-content: center;

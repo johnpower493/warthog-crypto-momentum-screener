@@ -111,6 +111,7 @@ export default function Home() {
     open: boolean;
     row?: Metric;
     closes?: number[];
+    oi?: number[];
     loading?: boolean;
     plan?: TradePlan | null;
     bt30?: any;
@@ -195,13 +196,28 @@ export default function Home() {
     { key: 'vwap15m', label: 'VWAP 15m', group: 'Levels', mobileDefault: false },
   ];
 
-  const defaultCols: Record<string, boolean> = Object.fromEntries(
+  const mobileDefaultCols: Record<string, boolean> = Object.fromEntries(
     columnMeta.map((c) => [c.key, c.mobileDefault])
   );
+
+  // Desktop defaults: a bit richer than mobile
+  const desktopDefaultCols: Record<string, boolean> = {
+    ...mobileDefaultCols,
+    exchange: true,
+    impulse: true,
+    chg1m: true,
+    chg60m: true,
+    oi: true,
+    oi5m: true,
+    atr: true,
+    volz: true,
+    rvol1m: true,
+    vwap15m: true,
+  };
   const [showColumns, setShowColumns] = useState(false);
   const [mobileMode, setMobileMode] = useState<boolean>(true);
 
-  const [cols, setCols] = useState<Record<string, boolean>>(defaultCols);
+  const [cols, setCols] = useState<Record<string, boolean>>(desktopDefaultCols);
 
   useEffect(() => {
     try { localStorage.setItem('cols', JSON.stringify(cols)); } catch {}
@@ -218,11 +234,11 @@ export default function Home() {
     const isSmall = window.matchMedia && window.matchMedia('(max-width: 520px)').matches;
     if (!isSmall) return;
 
-    // If user never customized columns, apply defaults (mobile preset)
+    // Only apply if user never customized columns
     try {
       const raw = localStorage.getItem('cols');
       if (!raw) {
-        setCols(defaultCols);
+        setCols(mobileDefaultCols);
       }
     } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -250,16 +266,25 @@ export default function Home() {
       setFavs(Array.isArray(storedFavs) ? storedFavs : []);
     } catch {}
 
+    // mobileMode from storage first, then columns defaulting can use it
+    let mm = mobileMode;
     try {
-      const rawCols = localStorage.getItem('cols');
-      if (rawCols) setCols((prev) => ({ ...prev, ...JSON.parse(rawCols) }));
+      const rawMm = localStorage.getItem('mobileMode');
+      if (rawMm) {
+        mm = !!JSON.parse(rawMm);
+        setMobileMode(mm);
+      }
     } catch {}
 
     try {
-      const rawMm = localStorage.getItem('mobileMode');
-      if (rawMm) setMobileMode(!!JSON.parse(rawMm));
-    } catch {}
-  }, []);
+      const rawCols = localStorage.getItem('cols');
+      if (rawCols) {
+        setCols((prev) => ({ ...prev, ...JSON.parse(rawCols) }));
+      } else {
+        const isSmall = window.matchMedia && window.matchMedia('(max-width: 520px)').matches;
+        setCols(isSmall && mm ? mobileDefaultCols : desktopDefaultCols);
+      }
+    } catch {}  }, []);
 
   useEffect(() => {
     // persist favorites
@@ -494,16 +519,18 @@ export default function Home() {
       (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}:8000` : 'http://127.0.0.1:8000');
 
     // Show modal immediately with row data; load history + plan + backtests async
-    setModal({ open: true, row: r, closes: [], loading: true, plan: null, bt30: null, bt90: null });
+    setModal({ open: true, row: r, closes: [], oi: [], loading: true, plan: null, bt30: null, bt90: null });
 
     try {
-      const [histResp, planResp, bt30Resp, bt90Resp] = await Promise.all([
+      const [histResp, oiResp, planResp, bt30Resp, bt90Resp] = await Promise.all([
         fetch(`${backendBase}/debug/history?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&limit=60`),
+        fetch(`${backendBase}/debug/oi_history?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&limit=60`),
         fetch(`${backendBase}/meta/trade_plan?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}`),
         fetch(`${backendBase}/meta/backtest?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&window_days=30`),
         fetch(`${backendBase}/meta/backtest?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&window_days=90`),
       ]);
       const j = histResp.ok ? await histResp.json() : { closes: [] };
+      const o = oiResp.ok ? await oiResp.json() : { oi: [] };
       const p = planResp.ok ? await planResp.json() : { plan: null };
       const b30 = bt30Resp.ok ? await bt30Resp.json() : null;
       const b90 = bt90Resp.ok ? await bt90Resp.json() : null;
@@ -512,13 +539,14 @@ export default function Home() {
         open: true,
         row: r,
         closes: j.closes || [],
+        oi: o.oi || [],
         plan: p.plan || null,
         bt30: b30 && b30.result ? ({ window_days: 30, ...b30 } as any) : null,
         bt90: b90 && b90.result ? ({ window_days: 90, ...b90 } as any) : null,
         loading: false,
       }));
     } catch (e) {
-      setModal((m) => ({ ...m, open: true, row: r, closes: [], loading: false }));
+      setModal((m) => ({ ...m, open: true, row: r, closes: [], oi: [], loading: false }));
     }
   };
 
@@ -682,8 +710,11 @@ export default function Home() {
                   <input type="checkbox" checked={mobileMode} onChange={(e)=>setMobileMode(e.target.checked)} />
                   <span className="muted">Mobile mode</span>
                 </label>
-                <button className="button" onClick={() => setCols(defaultCols)}>
+                <button className="button" onClick={() => setCols(mobileDefaultCols)}>
                   Mobile preset
+                </button>
+                <button className="button" onClick={() => setCols(desktopDefaultCols)}>
+                  Desktop preset
                 </button>
                 <button className="button" onClick={() => setCols(Object.fromEntries(Object.keys(cols).map(k => [k, true])) as any)}>
                   Show all
@@ -932,6 +963,7 @@ export default function Home() {
         <DetailsModal
           row={modal.row}
           closes={modal.closes || []}
+          oi={modal.oi || []}
           loading={!!modal.loading}
           plan={modal.plan || null}
           bt30={modal.bt30 || null}
@@ -982,23 +1014,43 @@ function fmt(n?: number | null) {
   return Number(n).toFixed(6);
 }
 
-function Sparkline({data}:{data:number[]}){
-  const w=200, h=60, pad=6;
-  if (!data || data.length<2) return <svg width={w} height={h}></svg>;
+function Sparkline({data, color="#4cc9f0"}:{data:number[], color?: string}){
+  const w=220, h=60, pad=6;
+  if (!data || data.length<2) {
+    return <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} preserveAspectRatio="none" />;
+  }
   const min=Math.min(...data), max=Math.max(...data);
   const xs=(i:number)=> pad + (i*(w-2*pad))/(data.length-1);
   const ys=(v:number)=> pad + (h-2*pad) * (1 - (v-min)/(max-min || 1));
   const d = data.map((v,i)=>`${i?'L':'M'}${xs(i)},${ys(v)}`).join(' ');
   return (
-    <svg width={w} height={h}>
-      <path d={d} fill="none" stroke="#4cc9f0" strokeWidth={2}/>
+    <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} preserveAspectRatio="none" style={{display:'block'}}>
+      <path d={d} fill="none" stroke={color} strokeWidth={2}/>
     </svg>
   );
+}
+
+function toDeltaSeries(series: number[]) {
+  if (!series || series.length < 2) return [];
+  const out: number[] = [];
+  for (let i = 1; i < series.length; i++) {
+    out.push(series[i] - series[i - 1]);
+  }
+  return out;
+}
+
+function deltaColor(series: number[]) {
+  const d = toDeltaSeries(series);
+  const last = d.length ? d[d.length - 1] : 0;
+  if (last > 0) return '#3ee145';
+  if (last < 0) return '#e13e3e';
+  return '#f6c177';
 }
 
 function DetailsModal({
   row,
   closes,
+  oi,
   loading,
   plan,
   bt30,
@@ -1010,6 +1062,7 @@ function DetailsModal({
 }: {
   row: Metric;
   closes: number[];
+  oi: number[];
   loading: boolean;
   plan: TradePlan | null;
   bt30: any;
@@ -1119,10 +1172,20 @@ function DetailsModal({
           </div>
 
           <div>
-            <div className="muted" style={{ marginBottom: 6 }}>
-              Last 60 x 1m closes {loading ? '(loading...)' : ''}
+            <div className="chartsGrid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <div className="muted" style={{ marginBottom: 6 }}>
+                  Last 60 x 1m closes {loading ? '(loading...)' : ''}
+                </div>
+                <Sparkline data={closes || []} />
+              </div>
+              <div>
+                <div className="muted" style={{ marginBottom: 6 }}>
+                  Open Interest Δ (last 60)
+                </div>
+                <Sparkline data={toDeltaSeries(oi || [])} color={deltaColor(oi || [])} />
+              </div>
             </div>
-            <Sparkline data={closes || []} />
 
             <div style={{ marginTop: 12 }}>
               <div className="muted" style={{ marginBottom: 6 }}>Trade Plan</div>

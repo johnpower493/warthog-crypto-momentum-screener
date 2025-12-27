@@ -230,6 +230,13 @@ class Aggregator:
         vals = list(st.close_1m.values)
         return vals[-limit:]
 
+    def get_oi_history(self, symbol: str, limit: int = 60):
+        st = self._states.get(symbol)
+        if not st:
+            return []
+        vals = list(st.oi_1m.values)
+        return vals[-limit:]
+
     def seed_htf_from_db(self, symbol: str):
         """Reload 15m/4h series for a symbol from the OHLC store"""
         st = self._states.get(symbol)
