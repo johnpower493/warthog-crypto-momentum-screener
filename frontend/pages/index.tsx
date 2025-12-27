@@ -673,6 +673,9 @@ export default function Home() {
             <a className="button" href="/alerts" title="View persisted alerts history">
               History
             </a>
+            <a className="button" href="/feed" title="High quality signals feed">
+              Feed
+            </a>
             <button className={"button "+(showColumns? 'buttonActive':'')} onClick={()=>setShowColumns(v=>!v)} title="Choose table columns">
               Columns
             </button>

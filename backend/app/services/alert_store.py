@@ -15,6 +15,9 @@ def insert_alert(
     reason: Optional[str],
     metrics: Optional[Dict[str, Any]] = None,
     created_ts: Optional[int] = None,
+    setup_score: Optional[float] = None,
+    setup_grade: Optional[str] = None,
+    avoid_reasons: Optional[list[str]] = None,
 ) -> int:
     if _CONN is None:
         init_db()
@@ -22,13 +25,17 @@ def insert_alert(
     if created_ts is None:
         import time
         created_ts = int(time.time() * 1000)
+    avoid_json = json.dumps(avoid_reasons) if avoid_reasons is not None else None
     with _DB_LOCK:
         cur = _CONN.execute(
             """
-            INSERT OR IGNORE INTO alerts(ts, created_ts, exchange, symbol, signal, source_tf, price, reason, metrics_json)
-            VALUES(?,?,?,?,?,?,?,?,?)
+            INSERT OR IGNORE INTO alerts(
+              ts, created_ts, exchange, symbol, signal, source_tf, price, reason,
+              setup_score, setup_grade, avoid_reasons, metrics_json
+            )
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
             """,
-            (ts, created_ts, exchange, symbol, signal, source_tf, price, reason, metrics_json),
+            (ts, created_ts, exchange, symbol, signal, source_tf, price, reason, setup_score, setup_grade, avoid_json, metrics_json),
         )
         _CONN.commit()
         # If ignored due to UNIQUE, fetch existing id
@@ -83,32 +90,75 @@ def insert_trade_plan(
         return int(cur.lastrowid)
 
 
-def get_recent_alerts(exchange: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
+def get_recent_alerts(
+    exchange: Optional[str] = None,
+    limit: int = 200,
+    since_ts: Optional[int] = None,
+    signal: Optional[str] = None,
+    source_tf: Optional[str] = None,
+    min_grade: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     if _CONN is None:
         init_db()
+    where = []
+    params: list[Any] = []
+    if exchange:
+        where.append("exchange = ?")
+        params.append(exchange)
+    if since_ts is not None:
+        where.append("created_ts >= ?")
+        params.append(int(since_ts))
+    if signal:
+        where.append("signal = ?")
+        params.append(signal)
+    if source_tf:
+        where.append("source_tf = ?")
+        params.append(source_tf)
+    if min_grade:
+        # Lexicographic doesn't work; use explicit set
+        min_grade = min_grade.upper()
+        if min_grade == 'A':
+            where.append("setup_grade = 'A'")
+        elif min_grade == 'B':
+            where.append("setup_grade IN ('A','B')")
+        elif min_grade == 'C':
+            where.append("setup_grade IN ('A','B','C')")
+
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    q = f"""
+      SELECT id, ts, created_ts, exchange, symbol, signal, source_tf, price, reason, setup_score, setup_grade, avoid_reasons
+      FROM alerts
+      {where_sql}
+      ORDER BY created_ts DESC
+      LIMIT ?
+    """
+    params.append(limit)
+
     with _DB_LOCK:
-        if exchange:
-            cur = _CONN.execute(
-                """SELECT id, ts, exchange, symbol, signal, source_tf, price, reason FROM alerts WHERE exchange=? ORDER BY ts DESC LIMIT ?""",
-                (exchange, limit),
-            )
-        else:
-            cur = _CONN.execute(
-                """SELECT id, ts, exchange, symbol, signal, source_tf, price, reason FROM alerts ORDER BY ts DESC LIMIT ?""",
-                (limit,),
-            )
+        cur = _CONN.execute(q, tuple(params))
         rows = cur.fetchall()
     out = []
+    import json
     for r in rows:
+        avoid = None
+        try:
+            avoid = json.loads(r[11]) if r[11] else None
+        except Exception:
+            avoid = None
         out.append({
             "id": r[0],
             "ts": r[1],
-            "exchange": r[2],
-            "symbol": r[3],
-            "signal": r[4],
-            "source_tf": r[5],
-            "price": r[6],
-            "reason": r[7],
+            "created_ts": r[2],
+            "exchange": r[3],
+            "symbol": r[4],
+            "signal": r[5],
+            "source_tf": r[6],
+            "price": r[7],
+            "reason": r[8],
+            "setup_score": r[9],
+            "setup_grade": r[10],
+            "avoid_reasons": avoid,
         })
     return out
 

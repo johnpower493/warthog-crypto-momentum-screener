@@ -307,9 +307,31 @@ async def debug_oi_history(exchange: str, symbol: str, limit: int = 60):
 
 
 @app.get("/meta/alerts")
-async def meta_alerts(exchange: str | None = None, limit: int = 200):
+async def meta_alerts(
+    exchange: str | None = None,
+    limit: int = 500,
+    since_minutes: int = 60,
+    signal: str | None = None,
+    source_tf: str | None = None,
+    min_grade: str = 'B',
+):
+    import time
     from .services.alert_store import get_recent_alerts
-    return {"exchange": exchange or "all", "limit": limit, "alerts": get_recent_alerts(exchange=exchange, limit=limit)}
+    since_ts = int(time.time() * 1000) - int(since_minutes * 60 * 1000)
+    return {
+        "exchange": exchange or "all",
+        "limit": limit,
+        "since_minutes": since_minutes,
+        "min_grade": min_grade,
+        "alerts": get_recent_alerts(
+            exchange=exchange,
+            limit=limit,
+            since_ts=since_ts,
+            signal=signal,
+            source_tf=source_tf,
+            min_grade=min_grade,
+        ),
+    }
 
 
 @app.get("/meta/trade_plan")

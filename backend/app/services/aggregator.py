@@ -121,6 +121,13 @@ class Aggregator:
                     swing_high = max(highs) if highs else None
                     swing_low = min(lows) if lows else None
                     plan = build_trade_plan(side=side, entry_price=float(m.last_price), atr=m.atr, swing_high_15m=swing_high, swing_low_15m=swing_low)
+                    md = m.model_dump()
+                    try:
+                        from .grader import grade_alert
+                        setup_score, setup_grade, avoid = grade_alert(md, side)
+                    except Exception:
+                        setup_score, setup_grade, avoid = None, None, None
+
                     alert_id = insert_alert(
                         ts=int(m.ts),
                         exchange=m.exchange,
@@ -129,8 +136,11 @@ class Aggregator:
                         source_tf=m.cipher_source_tf,
                         price=float(m.last_price),
                         reason=m.cipher_reason,
-                        metrics=m.model_dump(),
+                        metrics=md,
                         created_ts=int(__import__('time').time() * 1000),
+                        setup_score=setup_score,
+                        setup_grade=setup_grade,
+                        avoid_reasons=avoid,
                     )
                     if alert_id:
                         insert_trade_plan(

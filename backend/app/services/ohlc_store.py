@@ -50,6 +50,9 @@ def init_db(path: str = "ohlc.sqlite3"):
                   source_tf TEXT,                                 -- '15m' | '4h'
                   price REAL,
                   reason TEXT,
+                  setup_score REAL,
+                  setup_grade TEXT,
+                  avoid_reasons TEXT,
                   metrics_json TEXT,
                   UNIQUE(exchange, symbol, signal, ts)
                 )
@@ -61,8 +64,13 @@ def init_db(path: str = "ohlc.sqlite3"):
                 cols = [r[1] for r in _CONN.execute("PRAGMA table_info(alerts)").fetchall()]
                 if 'created_ts' not in cols:
                     _CONN.execute("ALTER TABLE alerts ADD COLUMN created_ts INTEGER NOT NULL DEFAULT 0")
-                    # Backfill created_ts with ts for historical rows
                     _CONN.execute("UPDATE alerts SET created_ts = ts WHERE created_ts = 0")
+                if 'setup_score' not in cols:
+                    _CONN.execute("ALTER TABLE alerts ADD COLUMN setup_score REAL")
+                if 'setup_grade' not in cols:
+                    _CONN.execute("ALTER TABLE alerts ADD COLUMN setup_grade TEXT")
+                if 'avoid_reasons' not in cols:
+                    _CONN.execute("ALTER TABLE alerts ADD COLUMN avoid_reasons TEXT")
             except Exception:
                 pass
 
