@@ -23,6 +23,7 @@ share/python-wheels/
 MANIFEST
 *.exe*
 *.sqlite3
+*.sqlite3-wal
 
 # Virtual environments
 venv/
