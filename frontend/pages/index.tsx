@@ -676,6 +676,9 @@ export default function Home() {
             <a className="button" href="/feed" title="High quality signals feed">
               Feed
             </a>
+            <a className="button" href="/analysis" title="Strategy analysis dashboard">
+              Analysis
+            </a>
             <button className={"button "+(showColumns? 'buttonActive':'')} onClick={()=>setShowColumns(v=>!v)} title="Choose table columns">
               Columns
             </button>

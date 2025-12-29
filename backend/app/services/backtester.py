@@ -6,7 +6,7 @@ from typing import List, Optional, Dict, Any, Tuple
 
 from ..models import SymbolMetrics
 from ..config import TRADEPLAN_ATR_MULT, TRADEPLAN_TP_R_MULTS
-from .ohlc_store import get_recent, init_db, _DB_LOCK, _CONN  # type: ignore
+from .ohlc_store import get_recent, init_db, get_conn, _DB_LOCK  # type: ignore
 
 STRATEGY_VERSION = "v1_structure_atr"
 
@@ -37,10 +37,9 @@ def _insert_backtest_row(
     avg_bars_to_resolve: Optional[float],
     results_json: Dict[str, Any],
 ):
-    if _CONN is None:
-        init_db()
+    conn = get_conn()
     with _DB_LOCK:
-        _CONN.execute(
+        conn.execute(
             """
             INSERT INTO backtest_results(
               ts, exchange, symbol, source_tf, window_days, strategy_version,
@@ -62,7 +61,7 @@ def _insert_backtest_row(
                 n_trades, win_rate, avg_r, avg_mae_r, avg_mfe_r, avg_bars_to_resolve, json.dumps(results_json),
             ),
         )
-        _CONN.commit()
+        conn.commit()
 
 
 def _simulate_one(

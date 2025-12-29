@@ -2,7 +2,7 @@ from __future__ import annotations
 import json
 from typing import Optional, Dict, Any, List, Tuple
 
-from .ohlc_store import init_db, _DB_LOCK, _CONN  # type: ignore
+from .ohlc_store import init_db, get_conn, _DB_LOCK  # type: ignore
 
 
 def insert_alert(
@@ -19,15 +19,14 @@ def insert_alert(
     setup_grade: Optional[str] = None,
     avoid_reasons: Optional[list[str]] = None,
 ) -> int:
-    if _CONN is None:
-        init_db()
+    conn = get_conn()
     metrics_json = json.dumps(metrics) if metrics is not None else None
     if created_ts is None:
         import time
         created_ts = int(time.time() * 1000)
     avoid_json = json.dumps(avoid_reasons) if avoid_reasons is not None else None
     with _DB_LOCK:
-        cur = _CONN.execute(
+        cur = conn.execute(
             """
             INSERT OR IGNORE INTO alerts(
               ts, created_ts, exchange, symbol, signal, source_tf, price, reason,
@@ -37,11 +36,11 @@ def insert_alert(
             """,
             (ts, created_ts, exchange, symbol, signal, source_tf, price, reason, setup_score, setup_grade, avoid_json, metrics_json),
         )
-        _CONN.commit()
+        conn.commit()
         # If ignored due to UNIQUE, fetch existing id
         if cur.lastrowid:
             return int(cur.lastrowid)
-        cur2 = _CONN.execute(
+        cur2 = conn.execute(
             """SELECT id FROM alerts WHERE exchange=? AND symbol=? AND signal=? AND ts=?""",
             (exchange, symbol, signal, ts),
         )
@@ -70,11 +69,10 @@ def insert_trade_plan(
     rr_tp3: Optional[float],
     plan: Optional[Dict[str, Any]] = None,
 ) -> int:
-    if _CONN is None:
-        init_db()
+    conn = get_conn()
     plan_json = json.dumps(plan) if plan is not None else None
     with _DB_LOCK:
-        cur = _CONN.execute(
+        cur = conn.execute(
             """
             INSERT INTO trade_plans(
               alert_id, ts, exchange, symbol, side, entry_type, entry_price,
@@ -86,7 +84,7 @@ def insert_trade_plan(
              stop_loss, tp1, tp2, tp3, atr, atr_mult, swing_ref,
              risk_per_unit, rr_tp1, rr_tp2, rr_tp3, plan_json),
         )
-        _CONN.commit()
+        conn.commit()
         return int(cur.lastrowid)
 
 
@@ -98,8 +96,7 @@ def get_recent_alerts(
     source_tf: Optional[str] = None,
     min_grade: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    if _CONN is None:
-        init_db()
+    conn = get_conn()
     where = []
     params: list[Any] = []
     if exchange:
@@ -136,7 +133,7 @@ def get_recent_alerts(
     params.append(limit)
 
     with _DB_LOCK:
-        cur = _CONN.execute(q, tuple(params))
+        cur = conn.execute(q, tuple(params))
         rows = cur.fetchall()
     out = []
     import json
@@ -164,10 +161,9 @@ def get_recent_alerts(
 
 
 def get_latest_trade_plan(exchange: str, symbol: str) -> Optional[Dict[str, Any]]:
-    if _CONN is None:
-        init_db()
+    conn = get_conn()
     with _DB_LOCK:
-        cur = _CONN.execute(
+        cur = conn.execute(
             """
             SELECT id, ts, side, entry_type, entry_price, stop_loss, tp1, tp2, tp3, atr, atr_mult, swing_ref, risk_per_unit, rr_tp1, rr_tp2, rr_tp3
             FROM trade_plans
@@ -201,10 +197,9 @@ def get_latest_trade_plan(exchange: str, symbol: str) -> Optional[Dict[str, Any]
 
 
 def get_trade_plans_since(exchange: str, symbol: str, since_ts: int) -> List[Dict[str, Any]]:
-    if _CONN is None:
-        init_db()
+    conn = get_conn()
     with _DB_LOCK:
-        cur = _CONN.execute(
+        cur = conn.execute(
             """
             SELECT ts, side, entry_price, stop_loss, tp1, tp2, tp3
             FROM trade_plans

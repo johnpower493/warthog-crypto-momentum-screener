@@ -7,6 +7,13 @@ _DB_LOCK = threading.Lock()
 _CONN: Optional[sqlite3.Connection] = None
 
 
+def get_conn() -> sqlite3.Connection:
+    """Return a sqlite connection (initializing if needed)."""
+    if _CONN is None:
+        init_db()
+    return _CONN  # type: ignore[return-value]
+
+
 def init_db(path: str = "ohlc.sqlite3"):
     global _CONN
     with _DB_LOCK:
@@ -74,6 +81,71 @@ def init_db(path: str = "ohlc.sqlite3"):
             except Exception:
                 pass
 
+            # migrations for analysis_runs
+            try:
+                _CONN.execute("SELECT 1 FROM analysis_runs LIMIT 1")
+            except Exception:
+                try:
+                    _CONN.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS analysis_runs (
+                          id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          ts INTEGER NOT NULL,
+                          window_days INTEGER NOT NULL,
+                          exchange TEXT NOT NULL,
+                          top200_only INTEGER NOT NULL,
+                          n_alerts INTEGER,
+                          UNIQUE(window_days, exchange, top200_only)
+                        )
+                        """
+                    )
+                    _CONN.execute("CREATE INDEX IF NOT EXISTS idx_analysis_runs_ts ON analysis_runs(ts)")
+                except Exception:
+                    pass
+
+            # migrations for backtest_trades
+            try:
+                _CONN.execute("SELECT 1 FROM backtest_trades LIMIT 1")
+            except Exception:
+                try:
+                    _CONN.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS backtest_trades (
+                          id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          alert_id INTEGER NOT NULL,
+                          window_days INTEGER NOT NULL,
+                          strategy_version TEXT NOT NULL,
+                          created_ts INTEGER NOT NULL,
+                          exchange TEXT NOT NULL,
+                          symbol TEXT NOT NULL,
+                          signal TEXT NOT NULL,
+                          source_tf TEXT,
+                          setup_grade TEXT,
+                          setup_score REAL,
+                          liquidity_top200 INTEGER,
+                          entry REAL,
+                          stop REAL,
+                          tp1 REAL,
+                          tp2 REAL,
+                          tp3 REAL,
+                          resolved TEXT NOT NULL,
+                          r_multiple REAL,
+                          mae_r REAL,
+                          mfe_r REAL,
+                          bars_to_resolve INTEGER,
+                          resolved_ts INTEGER,
+                          UNIQUE(alert_id, window_days, strategy_version)
+                        )
+                        """
+                    )
+                    _CONN.execute("CREATE INDEX IF NOT EXISTS idx_bt_trades_lookup ON backtest_trades(exchange, window_days, created_ts)")
+                    _CONN.execute("CREATE INDEX IF NOT EXISTS idx_bt_trades_symbol ON backtest_trades(exchange, symbol, window_days)")
+                except Exception:
+                    pass
+
+            except Exception:
+                pass
+
             _CONN.execute("CREATE INDEX IF NOT EXISTS idx_alerts_lookup ON alerts(exchange, symbol, ts)")
             _CONN.execute("CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(exchange, created_ts)")
 
@@ -130,6 +202,60 @@ def init_db(path: str = "ohlc.sqlite3"):
                 """
             )
             _CONN.execute("CREATE INDEX IF NOT EXISTS idx_backtest_lookup ON backtest_results(exchange, symbol, window_days)")
+
+            # Analysis run metadata (last recompute tracking)
+            _CONN.execute(
+                """
+                CREATE TABLE IF NOT EXISTS analysis_runs (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  ts INTEGER NOT NULL,
+                  window_days INTEGER NOT NULL,
+                  exchange TEXT NOT NULL,
+                  top200_only INTEGER NOT NULL,
+                  n_alerts INTEGER,
+                  UNIQUE(window_days, exchange, top200_only)
+                )
+                """
+            )
+            _CONN.execute("CREATE INDEX IF NOT EXISTS idx_analysis_runs_ts ON analysis_runs(ts)")
+
+            # Per-alert backtest outcomes for analysis dashboard
+            _CONN.execute(
+                """
+                CREATE TABLE IF NOT EXISTS backtest_trades (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  alert_id INTEGER NOT NULL,
+                  window_days INTEGER NOT NULL,
+                  strategy_version TEXT NOT NULL,
+                  created_ts INTEGER NOT NULL,
+                  exchange TEXT NOT NULL,
+                  symbol TEXT NOT NULL,
+                  signal TEXT NOT NULL,
+                  source_tf TEXT,
+                  setup_grade TEXT,
+                  setup_score REAL,
+                  liquidity_top200 INTEGER,
+
+                  entry REAL,
+                  stop REAL,
+                  tp1 REAL,
+                  tp2 REAL,
+                  tp3 REAL,
+
+                  resolved TEXT NOT NULL,           -- TP1/TP2/TP3/SL/NONE
+                  r_multiple REAL,
+                  mae_r REAL,
+                  mfe_r REAL,
+                  bars_to_resolve INTEGER,
+                  resolved_ts INTEGER,
+
+                  UNIQUE(alert_id, window_days, strategy_version),
+                  FOREIGN KEY(alert_id) REFERENCES alerts(id)
+                )
+                """
+            )
+            _CONN.execute("CREATE INDEX IF NOT EXISTS idx_bt_trades_lookup ON backtest_trades(exchange, window_days, created_ts)")
+            _CONN.execute("CREATE INDEX IF NOT EXISTS idx_bt_trades_symbol ON backtest_trades(exchange, symbol, window_days)")
 
             _CONN.commit()
 

@@ -26,6 +26,15 @@ stream_mgr = StreamManager()
 async def on_startup():
     await stream_mgr.start()
 
+    # Optional scheduled analysis recompute
+    try:
+        from .config import ANALYSIS_AUTORUN
+        if ANALYSIS_AUTORUN:
+            from .services.analysis_scheduler import analysis_autorun_loop
+            asyncio.create_task(analysis_autorun_loop())
+    except Exception:
+        pass
+
 @app.get("/health")
 async def health():
     # Backward-compatible basic liveness endpoint
@@ -445,6 +454,262 @@ async def meta_sentiment(exchange: str | None = None, window_minutes: int = 240)
         "score": score,
         "bias": bias,
     }
+
+
+@app.post('/meta/analysis/run')
+async def meta_analysis_run(window_days: int = 30, exchange: str = 'all', top200_only: bool = True):
+    from .services.analysis_backtester import run_analysis_backtest
+    return run_analysis_backtest(window_days=window_days, exchange=exchange, top200_only=top200_only)
+
+
+@app.get('/meta/analysis/summary')
+async def meta_analysis_summary(window_days: int = 30, exchange: str = 'all', top200_only: bool = True):
+    from .services.ohlc_store import init_db
+    from .services.ohlc_store import _DB_LOCK, _CONN  # type: ignore
+    from .services.backtester import STRATEGY_VERSION
+    init_db()
+
+    params = [window_days, STRATEGY_VERSION]
+    where = ["window_days=?", "strategy_version=?", "resolved != 'NONE'"]
+    if exchange != 'all':
+        where.append('exchange=?')
+        params.append(exchange)
+    if top200_only:
+        where.append('liquidity_top200 = 1')
+
+    where_sql = ' AND '.join(where)
+    with _DB_LOCK:
+        row = _CONN.execute(
+            f"""
+            SELECT
+              COUNT(*) as n,
+              AVG(CASE WHEN resolved LIKE 'TP%' THEN 1.0 ELSE 0.0 END) as win_rate,
+              AVG(r_multiple) as avg_r,
+              AVG(mae_r) as avg_mae_r,
+              AVG(mfe_r) as avg_mfe_r,
+              AVG(bars_to_resolve) as avg_bars
+            FROM backtest_trades
+            WHERE {where_sql}
+            """,
+            tuple(params),
+        ).fetchone()
+
+    return {
+        'window_days': window_days,
+        'exchange': exchange,
+        'top200_only': top200_only,
+        'n_trades': int(row[0] or 0),
+        'win_rate': row[1] or 0.0,
+        'avg_r': row[2] or 0.0,
+        'avg_mae_r': row[3] or 0.0,
+        'avg_mfe_r': row[4] or 0.0,
+        'avg_bars_to_resolve': row[5] or 0.0,
+    }
+
+
+@app.get('/meta/analysis/breakdown')
+async def meta_analysis_breakdown(window_days: int = 30, exchange: str = 'all', top200_only: bool = True):
+    from .services.ohlc_store import init_db
+    from .services.ohlc_store import _DB_LOCK, _CONN  # type: ignore
+    from .services.backtester import STRATEGY_VERSION
+    init_db()
+
+    params = [window_days, STRATEGY_VERSION]
+    where = ["window_days=?", "strategy_version=?", "resolved != 'NONE'"]
+    if exchange != 'all':
+        where.append('exchange=?')
+        params.append(exchange)
+    if top200_only:
+        where.append('liquidity_top200 = 1')
+    where_sql = ' AND '.join(where)
+
+    with _DB_LOCK:
+        rows = _CONN.execute(
+            f"""
+            SELECT setup_grade, source_tf, signal,
+                   COUNT(*) as n,
+                   AVG(CASE WHEN resolved LIKE 'TP%' THEN 1.0 ELSE 0.0 END) as win_rate,
+                   AVG(r_multiple) as avg_r
+            FROM backtest_trades
+            WHERE {where_sql}
+            GROUP BY setup_grade, source_tf, signal
+            ORDER BY setup_grade, source_tf, signal
+            """,
+            tuple(params),
+        ).fetchall()
+
+    out = []
+    for r in rows:
+        out.append({
+            'setup_grade': r[0] or '—',
+            'source_tf': r[1] or '—',
+            'signal': r[2] or '—',
+            'n': int(r[3] or 0),
+            'win_rate': float(r[4] or 0.0),
+            'avg_r': float(r[5] or 0.0),
+        })
+    return {'window_days': window_days, 'exchange': exchange, 'top200_only': top200_only, 'rows': out}
+
+
+@app.get('/meta/analysis/status')
+async def meta_analysis_status(window_days: int = 30, exchange: str = 'all', top200_only: bool = True):
+    from .services.ohlc_store import init_db, get_conn
+    from .services.ohlc_store import _DB_LOCK  # type: ignore
+    from .services.backtester import STRATEGY_VERSION
+    init_db(); conn = get_conn()
+
+    top = 1 if top200_only else 0
+    with _DB_LOCK:
+        last = conn.execute(
+            """SELECT ts, n_alerts FROM analysis_runs WHERE window_days=? AND exchange=? AND top200_only=?""",
+            (window_days, exchange, top),
+        ).fetchone()
+
+        totals = conn.execute(
+            """
+            SELECT
+              COUNT(*) as total,
+              SUM(CASE WHEN resolved = 'NONE' THEN 1 ELSE 0 END) as none_cnt,
+              SUM(CASE WHEN resolved != 'NONE' THEN 1 ELSE 0 END) as resolved_cnt
+            FROM backtest_trades
+            WHERE window_days=? AND strategy_version=?
+              AND (?='all' OR exchange=?)
+              AND (?=0 OR liquidity_top200=1)
+            """,
+            (window_days, STRATEGY_VERSION, exchange, exchange, top),
+        ).fetchone()
+
+    total = int(totals[0] or 0)
+    none_cnt = int(totals[1] or 0)
+    resolved_cnt = int(totals[2] or 0)
+    none_rate = (none_cnt / total) if total else 0.0
+
+    return {
+        'window_days': window_days,
+        'exchange': exchange,
+        'top200_only': top200_only,
+        'last_run_ts': last[0] if last else None,
+        'last_run_n_alerts': last[1] if last else None,
+        'total_rows': total,
+        'resolved_rows': resolved_cnt,
+        'none_rows': none_cnt,
+        'none_rate': none_rate,
+    }
+
+
+@app.get('/meta/analysis/worst_symbols')
+async def meta_analysis_worst_symbols(window_days: int = 30, exchange: str = 'all', top200_only: bool = True, min_trades: int = 5, limit: int = 25):
+    from .services.ohlc_store import init_db, get_conn
+    from .services.ohlc_store import _DB_LOCK  # type: ignore
+    from .services.backtester import STRATEGY_VERSION
+    init_db()
+    conn = get_conn()
+
+    params = [window_days, STRATEGY_VERSION]
+    where = ["window_days=?", "strategy_version=?", "resolved != 'NONE'"]
+    if exchange != 'all':
+        where.append('exchange=?')
+        params.append(exchange)
+    if top200_only:
+        where.append('liquidity_top200 = 1')
+    where_sql = ' AND '.join(where)
+
+    q = f"""
+      SELECT exchange, symbol, COUNT(*) as n, AVG(r_multiple) as avg_r,
+             AVG(CASE WHEN resolved LIKE 'TP%' THEN 1.0 ELSE 0.0 END) as win_rate
+      FROM backtest_trades
+      WHERE {where_sql}
+      GROUP BY exchange, symbol
+      HAVING COUNT(*) >= ?
+      ORDER BY avg_r ASC
+      LIMIT ?
+    """
+    params2 = params + [min_trades, limit]
+
+    with _DB_LOCK:
+        rows = conn.execute(q, tuple(params2)).fetchall()
+
+    out=[]
+    for r in rows:
+        out.append({'exchange': r[0], 'symbol': r[1], 'n': int(r[2] or 0), 'avg_r': float(r[3] or 0.0), 'win_rate': float(r[4] or 0.0)})
+    return {'window_days': window_days, 'exchange': exchange, 'top200_only': top200_only, 'min_trades': min_trades, 'rows': out}
+
+
+@app.get('/meta/analysis/best_symbols')
+async def meta_analysis_best_symbols(window_days: int = 30, exchange: str = 'all', top200_only: bool = True, min_trades: int = 5, limit: int = 25):
+    from .services.ohlc_store import init_db, get_conn
+    from .services.ohlc_store import _DB_LOCK  # type: ignore
+    from .services.backtester import STRATEGY_VERSION
+    init_db(); conn = get_conn()
+
+    params = [window_days, STRATEGY_VERSION]
+    where = ["window_days=?", "strategy_version=?", "resolved != 'NONE'"]
+    if exchange != 'all':
+        where.append('exchange=?')
+        params.append(exchange)
+    if top200_only:
+        where.append('liquidity_top200 = 1')
+    where_sql = ' AND '.join(where)
+
+    q = f"""
+      SELECT exchange, symbol, COUNT(*) as n, AVG(r_multiple) as avg_r,
+             AVG(CASE WHEN resolved LIKE 'TP%' THEN 1.0 ELSE 0.0 END) as win_rate
+      FROM backtest_trades
+      WHERE {where_sql}
+      GROUP BY exchange, symbol
+      HAVING COUNT(*) >= ?
+      ORDER BY avg_r DESC
+      LIMIT ?
+    """
+    params2 = params + [min_trades, limit]
+
+    with _DB_LOCK:
+        rows = conn.execute(q, tuple(params2)).fetchall()
+
+    out=[]
+    for r in rows:
+        out.append({'exchange': r[0], 'symbol': r[1], 'n': int(r[2] or 0), 'avg_r': float(r[3] or 0.0), 'win_rate': float(r[4] or 0.0)})
+    return {'window_days': window_days, 'exchange': exchange, 'top200_only': top200_only, 'min_trades': min_trades, 'rows': out}
+
+
+@app.get('/meta/analysis/best_buckets')
+async def meta_analysis_best_buckets(window_days: int = 30, exchange: str = 'all', top200_only: bool = True, min_trades: int = 10, limit: int = 25):
+    """Best performing buckets (grade × TF × side) by avg R."""
+    from .services.ohlc_store import init_db, get_conn
+    from .services.ohlc_store import _DB_LOCK  # type: ignore
+    from .services.backtester import STRATEGY_VERSION
+    init_db(); conn = get_conn()
+
+    params = [window_days, STRATEGY_VERSION]
+    where = ["window_days=?", "strategy_version=?", "resolved != 'NONE'"]
+    if exchange != 'all':
+        where.append('exchange=?')
+        params.append(exchange)
+    if top200_only:
+        where.append('liquidity_top200 = 1')
+    where_sql = ' AND '.join(where)
+
+    q = f"""
+      SELECT setup_grade, source_tf, signal,
+             COUNT(*) as n,
+             AVG(CASE WHEN resolved LIKE 'TP%' THEN 1.0 ELSE 0.0 END) as win_rate,
+             AVG(r_multiple) as avg_r
+      FROM backtest_trades
+      WHERE {where_sql}
+      GROUP BY setup_grade, source_tf, signal
+      HAVING COUNT(*) >= ?
+      ORDER BY avg_r DESC
+      LIMIT ?
+    """
+    params2 = params + [min_trades, limit]
+
+    with _DB_LOCK:
+        rows = conn.execute(q, tuple(params2)).fetchall()
+
+    out=[]
+    for r in rows:
+        out.append({'setup_grade': r[0] or '—', 'source_tf': r[1] or '—', 'signal': r[2] or '—', 'n': int(r[3] or 0), 'win_rate': float(r[4] or 0.0), 'avg_r': float(r[5] or 0.0)})
+    return {'window_days': window_days, 'exchange': exchange, 'top200_only': top200_only, 'min_trades': min_trades, 'rows': out}
 
 @app.websocket("/ws/screener")
 async def ws_screener(ws: WebSocket):

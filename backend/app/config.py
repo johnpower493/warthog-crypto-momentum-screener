@@ -80,3 +80,10 @@ ALERT_COOLDOWN_TOP_MS = int(os.getenv("ALERT_COOLDOWN_TOP_MS", "120000"))  # 2 m
 ALERT_COOLDOWN_SMALL_MS = int(os.getenv("ALERT_COOLDOWN_SMALL_MS", "300000"))  # 5 min for Small Caps
 ALERT_INCLUDE_EXPLANATION = os.getenv("ALERT_INCLUDE_EXPLANATION", "true").lower() in {"1","true","yes"}
 ALERT_MIN_GRADE = os.getenv("ALERT_MIN_GRADE", "A").upper()  # 'A' default for outbound notifications
+
+# Analysis recompute scheduler
+ANALYSIS_AUTORUN = os.getenv("ANALYSIS_AUTORUN", "false").lower() in {"1","true","yes"}
+ANALYSIS_AUTORUN_INTERVAL_SEC = int(os.getenv("ANALYSIS_AUTORUN_INTERVAL_SEC", "21600"))  # 6h
+ANALYSIS_AUTORUN_WINDOWS = [int(x) for x in os.getenv("ANALYSIS_AUTORUN_WINDOWS", "30,90").split(",") if x.strip().isdigit()]
+ANALYSIS_AUTORUN_TOP200_ONLY = os.getenv("ANALYSIS_AUTORUN_TOP200_ONLY", "true").lower() in {"1","true","yes"}
+
