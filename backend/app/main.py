@@ -508,7 +508,13 @@ async def meta_analysis_summary(window_days: int = 30, exchange: str = 'all', to
 
 
 @app.get('/meta/analysis/breakdown')
-async def meta_analysis_breakdown(window_days: int = 30, exchange: str = 'all', top200_only: bool = True):
+async def meta_analysis_breakdown(
+    window_days: int = 30,
+    exchange: str = 'all',
+    top200_only: bool = True,
+    min_trades: int = 1,
+    limit: int = 500,
+):
     from .services.ohlc_store import init_db
     from .services.ohlc_store import _DB_LOCK, _CONN  # type: ignore
     from .services.backtester import STRATEGY_VERSION
@@ -533,9 +539,11 @@ async def meta_analysis_breakdown(window_days: int = 30, exchange: str = 'all', 
             FROM backtest_trades
             WHERE {where_sql}
             GROUP BY setup_grade, source_tf, signal
+            HAVING COUNT(*) >= ?
             ORDER BY setup_grade, source_tf, signal
+            LIMIT ?
             """,
-            tuple(params),
+            tuple(params + [max(1, int(min_trades)), max(1, int(limit))]),
         ).fetchall()
 
     out = []
@@ -548,7 +556,14 @@ async def meta_analysis_breakdown(window_days: int = 30, exchange: str = 'all', 
             'win_rate': float(r[4] or 0.0),
             'avg_r': float(r[5] or 0.0),
         })
-    return {'window_days': window_days, 'exchange': exchange, 'top200_only': top200_only, 'rows': out}
+    return {
+        'window_days': window_days,
+        'exchange': exchange,
+        'top200_only': top200_only,
+        'min_trades': max(1, int(min_trades)),
+        'limit': max(1, int(limit)),
+        'rows': out,
+    }
 
 
 @app.get('/meta/analysis/status')
@@ -710,6 +725,74 @@ async def meta_analysis_best_buckets(window_days: int = 30, exchange: str = 'all
     for r in rows:
         out.append({'setup_grade': r[0] or '—', 'source_tf': r[1] or '—', 'signal': r[2] or '—', 'n': int(r[3] or 0), 'win_rate': float(r[4] or 0.0), 'avg_r': float(r[5] or 0.0)})
     return {'window_days': window_days, 'exchange': exchange, 'top200_only': top200_only, 'min_trades': min_trades, 'rows': out}
+
+
+@app.get('/meta/analysis/report')
+async def meta_analysis_report(
+    window_days: int = 30,
+    exchange: str = 'all',
+    top200_only: bool = True,
+    # per-section filters
+    breakdown_min_trades: int = 1,
+    breakdown_limit: int = 500,
+    bucket_min_trades: int = 10,
+    bucket_limit: int = 25,
+    symbol_min_trades: int = 5,
+    symbol_limit: int = 25,
+):
+    """Combined analysis endpoint to reduce frontend round-trips.
+
+    Returns the same shapes as the individual endpoints:
+    - summary
+    - status
+    - breakdown
+    - best_buckets
+    - best_symbols
+    - worst_symbols
+    """
+    summary = await meta_analysis_summary(window_days=window_days, exchange=exchange, top200_only=top200_only)
+    status = await meta_analysis_status(window_days=window_days, exchange=exchange, top200_only=top200_only)
+    breakdown = await meta_analysis_breakdown(
+        window_days=window_days,
+        exchange=exchange,
+        top200_only=top200_only,
+        min_trades=breakdown_min_trades,
+        limit=breakdown_limit,
+    )
+    best_buckets = await meta_analysis_best_buckets(
+        window_days=window_days,
+        exchange=exchange,
+        top200_only=top200_only,
+        min_trades=bucket_min_trades,
+        limit=bucket_limit,
+    )
+    best_symbols = await meta_analysis_best_symbols(
+        window_days=window_days,
+        exchange=exchange,
+        top200_only=top200_only,
+        min_trades=symbol_min_trades,
+        limit=symbol_limit,
+    )
+    worst_symbols = await meta_analysis_worst_symbols(
+        window_days=window_days,
+        exchange=exchange,
+        top200_only=top200_only,
+        min_trades=symbol_min_trades,
+        limit=symbol_limit,
+    )
+
+    return {
+        'window_days': window_days,
+        'exchange': exchange,
+        'top200_only': top200_only,
+        'summary': summary,
+        'status': status,
+        'breakdown': breakdown,
+        'best_buckets': best_buckets,
+        'best_symbols': best_symbols,
+        'worst_symbols': worst_symbols,
+    }
+
 
 @app.websocket("/ws/screener")
 async def ws_screener(ws: WebSocket):

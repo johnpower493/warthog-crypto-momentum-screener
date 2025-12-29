@@ -35,6 +35,11 @@ export default function AnalysisPage() {
   const [windowDays, setWindowDays] = useState<number>(30);
   const [exchange, setExchange] = useState<'all'|'binance'|'bybit'>('all');
   const [top200Only, setTop200Only] = useState<boolean>(true);
+  const [minTrades, setMinTrades] = useState<number>(5);
+  const [limit, setLimit] = useState<number>(25);
+
+  const [sortBreakdownBy, setSortBreakdownBy] = useState<'n'|'win_rate'|'avg_r'>('n');
+  const [sortSymbolsBy, setSortSymbolsBy] = useState<'avg_r'|'win_rate'|'n'>('avg_r');
 
   const [summary, setSummary] = useState<Summary | null>(null);
   const [statusInfo, setStatusInfo] = useState<any>(null);
@@ -55,27 +60,28 @@ export default function AnalysisPage() {
     setStatus('loading');
     try {
       const base = backendHttp || 'http://127.0.0.1:8000';
-      const qs = `window_days=${windowDays}&exchange=${exchange}&top200_only=${top200Only ? 'true':'false'}`;
-      const [sResp, stResp, bResp, bbResp, wResp, bestResp] = await Promise.all([
-        fetch(`${base}/meta/analysis/summary?${qs}`),
-        fetch(`${base}/meta/analysis/status?${qs}`),
-        fetch(`${base}/meta/analysis/breakdown?${qs}`),
-        fetch(`${base}/meta/analysis/best_buckets?${qs}`),
-        fetch(`${base}/meta/analysis/worst_symbols?${qs}`),
-        fetch(`${base}/meta/analysis/best_symbols?${qs}`),
-      ]);
-      const s = sResp.ok ? await sResp.json() : null;
-      const st = stResp.ok ? await stResp.json() : null;
-      const b = bResp.ok ? await bResp.json() : null;
-      const bb = bbResp.ok ? await bbResp.json() : null;
-      const w = wResp.ok ? await wResp.json() : null;
-      const best = bestResp.ok ? await bestResp.json() : null;
-      setSummary(s);
-      setStatusInfo(st);
-      setBreakdown(b?.rows || []);
-      setBestBuckets(bb?.rows || []);
-      setWorst(w?.rows || []);
-      setBest(best?.rows || []);
+      const url = new URL(base + '/meta/analysis/report');
+      url.searchParams.set('window_days', String(windowDays));
+      url.searchParams.set('exchange', exchange);
+      url.searchParams.set('top200_only', top200Only ? 'true' : 'false');
+
+      // Map UI filters to report params
+      url.searchParams.set('breakdown_min_trades', String(Math.max(1, minTrades)));
+      url.searchParams.set('breakdown_limit', String(Math.max(1, limit)));
+      url.searchParams.set('bucket_min_trades', String(Math.max(1, minTrades)));
+      url.searchParams.set('bucket_limit', String(Math.max(1, limit)));
+      url.searchParams.set('symbol_min_trades', String(Math.max(1, minTrades)));
+      url.searchParams.set('symbol_limit', String(Math.max(1, limit)));
+
+      const resp = await fetch(url.toString());
+      const data = resp.ok ? await resp.json() : null;
+
+      setSummary(data?.summary || null);
+      setStatusInfo(data?.status || null);
+      setBreakdown(data?.breakdown?.rows || []);
+      setBestBuckets(data?.best_buckets?.rows || []);
+      setWorst(data?.worst_symbols?.rows || []);
+      setBest(data?.best_symbols?.rows || []);
       setStatus('idle');
     } catch {
       setStatus('error');
@@ -101,7 +107,32 @@ export default function AnalysisPage() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backendHttp, windowDays, exchange, top200Only]);
+  }, [backendHttp, windowDays, exchange, top200Only, minTrades, limit]);
+
+  const sortedBreakdown = [...breakdown].sort((a, b) => {
+    if (sortBreakdownBy === 'n') return (b.n || 0) - (a.n || 0);
+    if (sortBreakdownBy === 'win_rate') return (b.win_rate || 0) - (a.win_rate || 0);
+    return (b.avg_r || 0) - (a.avg_r || 0);
+  });
+
+  const sortedBestBuckets = [...bestBuckets].sort((a, b) => {
+    // best buckets should default to avg_r desc
+    if (sortBreakdownBy === 'n') return (b.n || 0) - (a.n || 0);
+    if (sortBreakdownBy === 'win_rate') return (b.win_rate || 0) - (a.win_rate || 0);
+    return (b.avg_r || 0) - (a.avg_r || 0);
+  });
+
+  const sortSymbols = (rows: WorstRow[]) => {
+    const out = [...rows];
+    out.sort((a, b) => {
+      if (sortSymbolsBy === 'n') return (b.n || 0) - (a.n || 0);
+      if (sortSymbolsBy === 'win_rate') return (b.win_rate || 0) - (a.win_rate || 0);
+      return (b.avg_r || 0) - (a.avg_r || 0);
+    });
+    return out;
+  };
+  const sortedBest = sortSymbols(best);
+  const sortedWorst = sortSymbols(worst);
 
   return (
     <div className="container">
@@ -113,6 +144,7 @@ export default function AnalysisPage() {
             <span className="badge">{top200Only ? 'Top200' : 'All'}</span>
             <span className="badge">{exchange}</span>
             <span className="badge">Last recompute: {statusInfo?.last_run_ts ? new Date(statusInfo.last_run_ts).toLocaleString() : '—'}</span>
+            <span className="badge">Rows: {statusInfo?.total_rows ?? '—'} (resolved {statusInfo?.resolved_rows ?? '—'}, NONE {statusInfo?.none_rows ?? '—'})</span>
             <span className="badge">NONE rate: {statusInfo ? (statusInfo.none_rate*100).toFixed(1)+'%' : '—'}</span>
             {status === 'loading' && <span className="badge">Loading…</span>}
             {status === 'error' && <span className="badge">Error</span>}
@@ -130,6 +162,30 @@ export default function AnalysisPage() {
             <label style={{display:'inline-flex', alignItems:'center', gap:8}}>
               <input type="checkbox" checked={top200Only} onChange={(e)=>setTop200Only(e.target.checked)} />
               <span className="muted">Top 200 only</span>
+            </label>
+            <label style={{display:'inline-flex', alignItems:'center', gap:8}}>
+              <span className="muted">Min trades</span>
+              <input
+                className="input"
+                style={{width: 90}}
+                type="number"
+                min={1}
+                step={1}
+                value={minTrades}
+                onChange={(e)=>setMinTrades(Math.max(1, parseInt(e.target.value || '1', 10)))}
+              />
+            </label>
+            <label style={{display:'inline-flex', alignItems:'center', gap:8}}>
+              <span className="muted">Limit</span>
+              <input
+                className="input"
+                style={{width: 90}}
+                type="number"
+                min={5}
+                step={5}
+                value={limit}
+                onChange={(e)=>setLimit(Math.max(5, parseInt(e.target.value || '25', 10)))}
+              />
             </label>
             <button className="button" onClick={recompute}>Recompute</button>
             <button className="button" onClick={load}>Refresh</button>
@@ -168,7 +224,17 @@ export default function AnalysisPage() {
         </div>
 
         <div style={{padding:12}}>
-          <h3 style={{marginTop:0}}>Breakdown (Grade × TF × Side)</h3>
+          <div className="toolbar" style={{justifyContent:'space-between', padding:'0 0 8px 0'}}>
+            <h3 style={{margin:0}}>Breakdown (Grade × TF × Side)</h3>
+            <div className="group">
+              <span className="muted">Sort:</span>
+              <select className="select" value={sortBreakdownBy} onChange={(e)=>setSortBreakdownBy(e.target.value as any)}>
+                <option value="n">Trades</option>
+                <option value="win_rate">Win %</option>
+                <option value="avg_r">Avg R</option>
+              </select>
+            </div>
+          </div>
           <div className="tableWrap">
             <table className="table">
               <thead>
@@ -182,7 +248,7 @@ export default function AnalysisPage() {
                 </tr>
               </thead>
               <tbody>
-                {breakdown.map((r, i) => (
+                {sortedBreakdown.map((r, i) => (
                   <tr key={i}>
                     <td style={{fontWeight:800}}>{r.setup_grade}</td>
                     <td className="muted">{r.source_tf}</td>
@@ -212,7 +278,7 @@ export default function AnalysisPage() {
                 </tr>
               </thead>
               <tbody>
-                {bestBuckets.map((r, i) => (
+                {sortedBestBuckets.map((r, i) => (
                   <tr key={i}>
                     <td style={{fontWeight:800}}>{r.setup_grade}</td>
                     <td className="muted">{r.source_tf}</td>
@@ -228,7 +294,17 @@ export default function AnalysisPage() {
         </div>
 
         <div style={{padding:12}}>
-          <h3 style={{marginTop:0}}>Best symbols (by Avg R)</h3>
+          <div className="toolbar" style={{justifyContent:'space-between', padding:'0 0 8px 0'}}>
+            <h3 style={{margin:0}}>Best symbols</h3>
+            <div className="group">
+              <span className="muted">Sort:</span>
+              <select className="select" value={sortSymbolsBy} onChange={(e)=>setSortSymbolsBy(e.target.value as any)}>
+                <option value="avg_r">Avg R</option>
+                <option value="win_rate">Win %</option>
+                <option value="n">Trades</option>
+              </select>
+            </div>
+          </div>
           <div className="tableWrap">
             <table className="table">
               <thead>
@@ -241,7 +317,7 @@ export default function AnalysisPage() {
                 </tr>
               </thead>
               <tbody>
-                {best.map((r, i) => (
+                {sortedBest.map((r, i) => (
                   <tr key={i}>
                     <td className="muted">{r.exchange}</td>
                     <td style={{fontWeight:800}}>{r.symbol}</td>
@@ -256,7 +332,7 @@ export default function AnalysisPage() {
         </div>
 
         <div style={{padding:12}}>
-          <h3 style={{marginTop:0}}>Worst symbols (by Avg R)</h3>
+          <h3 style={{marginTop:0}}>Worst symbols</h3>
           <div className="tableWrap">
             <table className="table">
               <thead>
@@ -269,7 +345,7 @@ export default function AnalysisPage() {
                 </tr>
               </thead>
               <tbody>
-                {worst.map((r, i) => (
+                {sortedWorst.map((r, i) => (
                   <tr key={i}>
                     <td className="muted">{r.exchange}</td>
                     <td style={{fontWeight:800}}>{r.symbol}</td>
