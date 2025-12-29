@@ -33,6 +33,11 @@ class SymbolMetrics(BaseModel):
     liquidity_rank: Optional[int] = None
     liquidity_top200: Optional[bool] = None
 
+    # Setup grading (for feed/alerts)
+    setup_score: Optional[float] = None
+    setup_grade: Optional[str] = None
+    avoid_reasons: Optional[list[str]] = None
+
     # Scalping impulse
     impulse_score: Optional[float] = None  # 0..100 (higher = more impulsive)
     impulse_dir: Optional[int] = None  # -1, 0, +1 direction based on 1m change

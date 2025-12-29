@@ -125,6 +125,10 @@ class Aggregator:
                     try:
                         from .grader import grade_alert
                         setup_score, setup_grade, avoid = grade_alert(md, side)
+                        # attach to in-memory metric for downstream (web UI + telegram/discord)
+                        m.setup_score = setup_score
+                        m.setup_grade = setup_grade
+                        m.avoid_reasons = avoid
                     except Exception:
                         setup_score, setup_grade, avoid = None, None, None
 

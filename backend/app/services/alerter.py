@@ -5,7 +5,7 @@ from typing import List, Dict
 import httpx
 
 from ..models import SymbolMetrics
-from ..config import ENABLE_ALERTS, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, DISCORD_WEBHOOK_URL, ALERT_DEDUP_MIN_MS, ALERT_COOLDOWN_PER_SYMBOL_MS, ALERT_INCLUDE_EXPLANATION
+from ..config import ENABLE_ALERTS, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, DISCORD_WEBHOOK_URL, ALERT_DEDUP_MIN_MS, ALERT_COOLDOWN_PER_SYMBOL_MS, ALERT_INCLUDE_EXPLANATION, ALERT_MIN_GRADE
 from ..config import os as _os  # sentinel for linter
 
 _last_alert_ts: Dict[str, int] = {}
@@ -57,7 +57,22 @@ async def process_metrics(metrics: List[SymbolMetrics]):
     from ..config import ALERT_COOLDOWN_TOP_MS, ALERT_COOLDOWN_SMALL_MS
     now_ms = _now_ms()
     tasks = []
+    # grade threshold map
+    grade_rank = {'A': 3, 'B': 2, 'C': 1}
+    min_rank = grade_rank.get(ALERT_MIN_GRADE, 3)
+
     for m in metrics:
+        # Only send outbound notifications for A-grade by default
+        g = (m.model_dump().get('setup_grade') if hasattr(m, 'model_dump') else None)  # type: ignore
+        if g is None:
+            g = getattr(m, 'setup_grade', None)
+        g = (str(g).upper() if g else None)
+        if g is None:
+            # if grade not present, be conservative: do not notify
+            continue
+        if grade_rank.get(g, 0) < min_rank:
+            continue
+
         # cooldown selection based on liquidity cohort
         sym = f"{m.exchange}:{m.symbol}"
         last = _last_symbol_alert_ts.get(sym, 0)

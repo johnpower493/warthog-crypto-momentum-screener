@@ -79,3 +79,4 @@ ALERT_COOLDOWN_PER_SYMBOL_MS = int(os.getenv("ALERT_COOLDOWN_PER_SYMBOL_MS", "30
 ALERT_COOLDOWN_TOP_MS = int(os.getenv("ALERT_COOLDOWN_TOP_MS", "120000"))  # 2 min for Top 200
 ALERT_COOLDOWN_SMALL_MS = int(os.getenv("ALERT_COOLDOWN_SMALL_MS", "300000"))  # 5 min for Small Caps
 ALERT_INCLUDE_EXPLANATION = os.getenv("ALERT_INCLUDE_EXPLANATION", "true").lower() in {"1","true","yes"}
+ALERT_MIN_GRADE = os.getenv("ALERT_MIN_GRADE", "A").upper()  # 'A' default for outbound notifications
