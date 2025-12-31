@@ -1273,36 +1273,96 @@ function DetailsModal({
               {footprintStatus === 'idle' && <div className="muted">Disconnected</div>}
               {footprintStatus === 'connected' && footprintCandles.length === 0 && <div className="muted">No data yet</div>}
               {footprintStatus === 'connected' && footprintCandles.length > 0 && (
-                <div className="card" style={{ padding: 10, maxHeight: 300, overflowY: 'auto' }}>
-                  <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-                        <th style={{ textAlign: 'left', padding: 4 }}>Time</th>
-                        <th style={{ textAlign: 'right', padding: 4 }}>Bid Vol</th>
-                        <th style={{ textAlign: 'right', padding: 4 }}>Ask Vol</th>
-                        <th style={{ textAlign: 'right', padding: 4 }}>Delta</th>
-                        <th style={{ textAlign: 'right', padding: 4 }}>Levels</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {footprintCandles.slice(-8).reverse().map((c: any, i: number) => {
-                        const delta = c.delta || 0;
-                        const deltaColor = delta >= 0 ? '#3ee145' : '#e13e3e';
-                        return (
-                          <tr key={c.open_ts || i} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                            <td style={{ padding: 4 }}>{new Date(c.open_ts).toLocaleTimeString()}</td>
-                            <td style={{ textAlign: 'right', padding: 4, color: '#e13e3e' }}>{(c.bid || 0).toFixed(2)}</td>
-                            <td style={{ textAlign: 'right', padding: 4, color: '#3ee145' }}>{(c.ask || 0).toFixed(2)}</td>
-                            <td style={{ textAlign: 'right', padding: 4, color: deltaColor, fontWeight: 600 }}>
-                              {delta >= 0 ? '+' : ''}{delta.toFixed(2)}
-                            </td>
-                            <td style={{ textAlign: 'right', padding: 4 }} className="muted">{(c.levels || []).length}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                <>
+                  {/* CVD Chart */}
+                  <div className="card" style={{ padding: 10, marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, marginBottom: 4, color: '#aaa' }}>CVD (Cumulative Volume Delta)</div>
+                    <div style={{ position: 'relative', height: 60, background: 'rgba(0,0,0,0.2)', borderRadius: 4 }}>
+                      <svg width="100%" height="60" style={{ display: 'block' }}>
+                        {footprintCandles.slice(-30).map((c: any, i: number, arr: any[]) => {
+                          if (i === 0) return null;
+                          const x1 = ((i - 1) / (arr.length - 1)) * 100;
+                          const x2 = (i / (arr.length - 1)) * 100;
+                          const minCvd = Math.min(...arr.map((x: any) => x.cvd || 0));
+                          const maxCvd = Math.max(...arr.map((x: any) => x.cvd || 0));
+                          const range = maxCvd - minCvd || 1;
+                          const y1 = 50 - (((arr[i - 1].cvd || 0) - minCvd) / range) * 40;
+                          const y2 = 50 - (((c.cvd || 0) - minCvd) / range) * 40;
+                          const color = (c.cvd || 0) >= 0 ? '#3ee145' : '#e13e3e';
+                          return (
+                            <line
+                              key={i}
+                              x1={`${x1}%`}
+                              y1={y1}
+                              x2={`${x2}%`}
+                              y2={y2}
+                              stroke={color}
+                              strokeWidth="2"
+                            />
+                          );
+                        })}
+                      </svg>
+                      <div style={{ position: 'absolute', top: 2, right: 4, fontSize: 10, color: '#aaa' }}>
+                        {(footprintCandles[footprintCandles.length - 1]?.cvd || 0).toFixed(2)}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Footprint Table with Imbalance Highlighting */}
+                  <div className="card" style={{ padding: 10, maxHeight: 300, overflowY: 'auto' }}>
+                    <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                          <th style={{ textAlign: 'left', padding: 4 }}>Time</th>
+                          <th style={{ textAlign: 'right', padding: 4 }}>Bid Vol</th>
+                          <th style={{ textAlign: 'right', padding: 4 }}>Ask Vol</th>
+                          <th style={{ textAlign: 'right', padding: 4 }}>Delta</th>
+                          <th style={{ textAlign: 'right', padding: 4 }}>CVD</th>
+                          <th style={{ textAlign: 'right', padding: 4 }}>Levels</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {footprintCandles.slice(-8).reverse().map((c: any, i: number) => {
+                          const bid = c.bid || 0;
+                          const ask = c.ask || 0;
+                          const delta = c.delta || 0;
+                          const cvd = c.cvd || 0;
+                          const deltaColor = delta >= 0 ? '#3ee145' : '#e13e3e';
+                          const cvdColor = cvd >= 0 ? '#3ee145' : '#e13e3e';
+                          
+                          // Imbalance detection: ratio > 3:1
+                          const ratio = ask > 0 && bid > 0 ? Math.max(ask / bid, bid / ask) : 0;
+                          const isImbalance = ratio > 3;
+                          const imbalanceColor = ask > bid ? 'rgba(62, 225, 69, 0.15)' : 'rgba(225, 62, 62, 0.15)';
+                          
+                          return (
+                            <tr 
+                              key={c.open_ts || i} 
+                              style={{ 
+                                borderBottom: '1px solid rgba(255,255,255,0.05)',
+                                background: isImbalance ? imbalanceColor : 'transparent'
+                              }}
+                            >
+                              <td style={{ padding: 4 }}>
+                                {new Date(c.open_ts).toLocaleTimeString()}
+                                {isImbalance && <span style={{ marginLeft: 4 }}>🔥</span>}
+                              </td>
+                              <td style={{ textAlign: 'right', padding: 4, color: '#e13e3e' }}>{bid.toFixed(2)}</td>
+                              <td style={{ textAlign: 'right', padding: 4, color: '#3ee145' }}>{ask.toFixed(2)}</td>
+                              <td style={{ textAlign: 'right', padding: 4, color: deltaColor, fontWeight: 600 }}>
+                                {delta >= 0 ? '+' : ''}{delta.toFixed(2)}
+                              </td>
+                              <td style={{ textAlign: 'right', padding: 4, color: cvdColor, fontSize: 11 }}>
+                                {cvd >= 0 ? '+' : ''}{cvd.toFixed(2)}
+                              </td>
+                              <td style={{ textAlign: 'right', padding: 4 }} className="muted">{(c.levels || []).length}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               )}
             </div>
           </div>

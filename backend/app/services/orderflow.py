@@ -41,6 +41,7 @@ class CandleAgg:
     levels: Dict[float, LevelAgg] = field(default_factory=dict)
     total_bid: float = 0.0
     total_ask: float = 0.0
+    cvd: float = 0.0  # cumulative volume delta for this candle (ask - bid)
 
     def apply_trade(self, price: float, qty: float, side: str, step: float) -> None:
         lvl = _round_step(price, step)
@@ -55,6 +56,8 @@ class CandleAgg:
         else:
             a.bid += qty
             self.total_bid += qty
+        # Update CVD (cumulative delta within this candle)
+        self.cvd = self.total_ask - self.total_bid
 
 
 class OrderFlowEngine:
@@ -121,6 +124,7 @@ class OrderFlowEngine:
                         "bid": float(c.total_bid),
                         "ask": float(c.total_ask),
                         "delta": float(c.total_ask - c.total_bid),
+                        "cvd": float(c.cvd),
                         "levels": levels,
                     }
                 )
@@ -172,6 +176,7 @@ class OrderFlowEngine:
                     "bid": float(c.total_bid),
                     "ask": float(c.total_ask),
                     "delta": float(c.total_ask - c.total_bid),
+                    "cvd": float(c.cvd),
                     "levels": levels,
                 },
             }
