@@ -22,6 +22,10 @@ app.add_middleware(
 
 stream_mgr = StreamManager()
 
+# On-demand orderflow (trades -> footprint) streams for the DetailsModal
+from .services.orderflow_hub import OrderFlowHub
+orderflow_mgr = OrderFlowHub()
+
 @app.on_event("startup")
 async def on_startup():
     await stream_mgr.start()
@@ -792,6 +796,75 @@ async def meta_analysis_report(
         'best_symbols': best_symbols,
         'worst_symbols': worst_symbols,
     }
+
+
+@app.websocket("/ws/orderflow")
+async def ws_orderflow(
+    ws: WebSocket,
+    exchange: str = 'binance',
+    symbol: str = 'BTCUSDT',
+    tf: str = '1m',
+    step: float = 0.0,
+    lookback: int = 30,
+    emit_ms: int = 300,
+):
+    """Trade-based footprint stream for a single symbol.
+
+    - Sends an initial snapshot (last N candles)
+    - Then periodically sends latest-candle deltas (replace-current-candle)
+
+    Query params:
+      exchange: binance|bybit
+      symbol: e.g. BTCUSDT
+      tf: 1m, 5m, 15m, 1h
+      step: price bucket size (0 means no bucketing; not recommended)
+      lookback: candles in initial snapshot
+      emit_ms: delta emit interval
+    """
+    await ws.accept()
+
+    from .services.orderflow import _tf_ms
+
+    exchange = (exchange or 'binance').lower()
+    symbol = (symbol or 'BTCUSDT').upper()
+    tf_ms = _tf_ms(tf)
+    step = float(step)
+    lookback = max(1, min(int(lookback), 500))
+    emit_ms = max(50, min(int(emit_ms), 2000))
+
+    engine = await orderflow_mgr.subscribe(exchange, symbol, tf=tf, step=step)
+
+    async def send_snapshot():
+        snap = await engine.snapshot(tf_ms=tf_ms, step=step, lookback=lookback)
+        await ws.send_json(snap)
+
+    async def send_delta_loop():
+        while True:
+            await asyncio.sleep(emit_ms / 1000.0)
+            d = await engine.delta(tf_ms=tf_ms, step=step)
+            if d is not None:
+                await ws.send_json(d)
+
+    try:
+        await send_snapshot()
+        delta_task = asyncio.create_task(send_delta_loop())
+        # Keep connection alive; we don't expect inbound messages.
+        while True:
+            try:
+                await ws.receive_text()
+            except Exception:
+                await asyncio.sleep(60)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        try:
+            delta_task.cancel()  # type: ignore
+        except Exception:
+            pass
+        try:
+            await orderflow_mgr.unsubscribe(exchange, symbol, tf=tf, step=step)
+        except Exception:
+            pass
 
 
 @app.websocket("/ws/screener")

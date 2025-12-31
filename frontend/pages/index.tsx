@@ -983,6 +983,7 @@ export default function Home() {
             const next = sorted[(i + dir + sorted.length) % sorted.length];
             openDetails(next);
           }}
+          backendWs={resolvedWsUrl}
         />
       )}
     </div>
@@ -1065,6 +1066,7 @@ function DetailsModal({
   onToggleFav,
   onClose,
   onNavigate,
+  backendWs,
 }: {
   row: Metric;
   closes: number[];
@@ -1077,13 +1079,54 @@ function DetailsModal({
   onToggleFav: () => void;
   onClose: () => void;
   onNavigate: (dir: -1 | 1) => void;
+  backendWs: string;
 }) {
   const exchange = row.exchange || 'binance';
   const symbol = row.symbol;
 
+  const [footprintCandles, setFootprintCandles] = useState<any[]>([]);
+  const [footprintStatus, setFootprintStatus] = useState<'idle'|'loading'|'connected'>('idle');
+
   const tvUrl = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(
     exchange.toUpperCase() === 'BYBIT' ? `BYBIT:${symbol}` : `BINANCE:${symbol}`
   )}`;
+
+  // Order flow websocket
+  useEffect(() => {
+    setFootprintStatus('loading');
+    setFootprintCandles([]);
+    // Extract base WS URL (remove /ws/screener/* path if present)
+    const baseWs = backendWs.replace(/\/ws\/screener.*$/, '');
+    const wsUrl = `${baseWs}/ws/orderflow?exchange=${exchange}&symbol=${symbol}&tf=1m&step=0.5&lookback=30&emit_ms=300`;
+    const ws = new WebSocket(wsUrl);
+    ws.onopen = () => setFootprintStatus('connected');
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'snapshot') {
+          setFootprintCandles(msg.candles || []);
+        } else if (msg.type === 'delta') {
+          setFootprintCandles(prev => {
+            const c = msg.candle;
+            const idx = prev.findIndex((x: any) => x.open_ts === c.open_ts);
+            if (idx >= 0) {
+              const next = [...prev];
+              next[idx] = c;
+              return next;
+            }
+            return [...prev, c];
+          });
+        }
+      } catch {}
+    };
+    ws.onerror = () => setFootprintStatus('idle');
+    ws.onclose = () => setFootprintStatus('idle');
+    return () => {
+      ws.close();
+      setFootprintStatus('idle');
+      setFootprintCandles([]);
+    };
+  }, [exchange, symbol, backendWs]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -1222,6 +1265,45 @@ function DetailsModal({
                 <Stat label="90d Win%" value={bt90?.win_rate!=null ? (bt90.win_rate*100).toFixed(1)+'%' : '-'} className="muted" />
                 <Stat label="90d Avg R" value={bt90?.avg_r!=null ? Number(bt90.avg_r).toFixed(2) : '-'} className="muted" />
               </div>
+            </div>
+
+            <div style={{ marginTop: 12 }}>
+              <div className="muted" style={{ marginBottom: 6 }}>Order Flow (Footprint) – 1m</div>
+              {footprintStatus === 'loading' && <div className="muted">Loading...</div>}
+              {footprintStatus === 'idle' && <div className="muted">Disconnected</div>}
+              {footprintStatus === 'connected' && footprintCandles.length === 0 && <div className="muted">No data yet</div>}
+              {footprintStatus === 'connected' && footprintCandles.length > 0 && (
+                <div className="card" style={{ padding: 10, maxHeight: 300, overflowY: 'auto' }}>
+                  <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                        <th style={{ textAlign: 'left', padding: 4 }}>Time</th>
+                        <th style={{ textAlign: 'right', padding: 4 }}>Bid Vol</th>
+                        <th style={{ textAlign: 'right', padding: 4 }}>Ask Vol</th>
+                        <th style={{ textAlign: 'right', padding: 4 }}>Delta</th>
+                        <th style={{ textAlign: 'right', padding: 4 }}>Levels</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {footprintCandles.slice(-8).reverse().map((c: any, i: number) => {
+                        const delta = c.delta || 0;
+                        const deltaColor = delta >= 0 ? '#3ee145' : '#e13e3e';
+                        return (
+                          <tr key={c.open_ts || i} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                            <td style={{ padding: 4 }}>{new Date(c.open_ts).toLocaleTimeString()}</td>
+                            <td style={{ textAlign: 'right', padding: 4, color: '#e13e3e' }}>{(c.bid || 0).toFixed(2)}</td>
+                            <td style={{ textAlign: 'right', padding: 4, color: '#3ee145' }}>{(c.ask || 0).toFixed(2)}</td>
+                            <td style={{ textAlign: 'right', padding: 4, color: deltaColor, fontWeight: 600 }}>
+                              {delta >= 0 ? '+' : ''}{delta.toFixed(2)}
+                            </td>
+                            <td style={{ textAlign: 'right', padding: 4 }} className="muted">{(c.levels || []).length}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         </div>
