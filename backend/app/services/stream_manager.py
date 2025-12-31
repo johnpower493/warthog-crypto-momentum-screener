@@ -186,6 +186,8 @@ class StreamManager:
             self._task.cancel()
             try:
                 await self._task
+            except asyncio.CancelledError:
+                pass
             except Exception:
                 pass
         self._task = asyncio.create_task(self._run_binance())
@@ -195,6 +197,8 @@ class StreamManager:
             self._task_bin_ticker.cancel()
             try:
                 await self._task_bin_ticker
+            except asyncio.CancelledError:
+                pass
             except Exception:
                 pass
         self._task_bin_ticker = asyncio.create_task(self._run_binance_ticker())
@@ -204,6 +208,8 @@ class StreamManager:
             self._task_bybit.cancel()
             try:
                 await self._task_bybit
+            except asyncio.CancelledError:
+                pass
             except Exception:
                 pass
         self._task_bybit = asyncio.create_task(self._run_bybit())
@@ -213,6 +219,8 @@ class StreamManager:
             self._task_bybit_ticker.cancel()
             try:
                 await self._task_bybit_ticker
+            except asyncio.CancelledError:
+                pass
             except Exception:
                 pass
         self._task_bybit_ticker = asyncio.create_task(self._run_bybit_ticker())
