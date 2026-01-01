@@ -71,6 +71,16 @@ class Aggregator:
                 m.liquidity_top200 = m.symbol in top
         except Exception:
             pass
+        # Enrich with market cap data
+        try:
+            from .market_cap import get_provider
+            mc_provider = get_provider()
+            for m in metrics:
+                mc = mc_provider.get_market_cap(m.symbol)
+                m.market_cap = mc
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).debug(f"Market cap enrichment error: {e}")
         snap = ScreenerSnapshot(exchange=self.exchange, ts=max((m.ts for m in metrics), default=0), metrics=metrics)
         try:
             import logging

@@ -32,6 +32,7 @@ class SymbolMetrics(BaseModel):
     # Liquidity cohorting
     liquidity_rank: Optional[int] = None
     liquidity_top200: Optional[bool] = None
+    market_cap: Optional[float] = None  # Market cap in USD
 
     # Setup grading (for feed/alerts)
     setup_score: Optional[float] = None

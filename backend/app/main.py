@@ -30,6 +30,20 @@ orderflow_mgr = OrderFlowHub()
 async def on_startup():
     await stream_mgr.start()
 
+    # Initialize market cap provider
+    try:
+        from .services.market_cap import initialize
+        import logging as log
+        log.info("Initializing market cap provider...")
+        await initialize()
+        log.info("Market cap provider initialized successfully")
+        # Schedule periodic updates
+        asyncio.create_task(_market_cap_update_loop())
+    except Exception as e:
+        import traceback
+        logging.getLogger(__name__).error(f"Failed to initialize market cap provider: {e}")
+        logging.getLogger(__name__).error(traceback.format_exc())
+
     # Optional scheduled analysis recompute
     try:
         from .config import ANALYSIS_AUTORUN
@@ -38,6 +52,17 @@ async def on_startup():
             asyncio.create_task(analysis_autorun_loop())
     except Exception:
         pass
+
+async def _market_cap_update_loop():
+    """Periodically update market cap cache."""
+    from .services.market_cap import get_provider
+    while True:
+        await asyncio.sleep(300)  # 5 minutes
+        try:
+            provider = get_provider()
+            await provider.update_if_needed()
+        except Exception as e:
+            logging.getLogger(__name__).error(f"Market cap update failed: {e}")
 
 @app.get("/health")
 async def health():
@@ -218,6 +243,33 @@ async def debug_oi():
         }
     except Exception as e:
         return {"error": str(e)}
+
+@app.get("/debug/marketcap")
+async def debug_marketcap():
+    """Debug endpoint to check Market Cap data"""
+    try:
+        from .services.market_cap import get_provider
+        provider = get_provider()
+        snap = stream_mgr.agg.build_snapshot()  # type: ignore[attr-defined]
+        mc_metrics = []
+        for m in snap.metrics:
+            mc = provider.get_market_cap(m.symbol)
+            if mc is not None and mc > 0:
+                mc_metrics.append({
+                    "symbol": m.symbol,
+                    "market_cap": mc,
+                })
+        return {
+            "exchange": "binance",
+            "total_symbols": len(snap.metrics),
+            "symbols_with_mc": len(mc_metrics),
+            "cache_size": len(provider._cache),
+            "cache_sample": list(provider._cache.items())[:10],
+            "mc_data": mc_metrics[:10]  # Show first 10
+        }
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
 
 @app.get("/debug/snapshot/all")
 async def debug_snapshot_all():

@@ -81,6 +81,9 @@ ALERT_COOLDOWN_SMALL_MS = int(os.getenv("ALERT_COOLDOWN_SMALL_MS", "300000"))  #
 ALERT_INCLUDE_EXPLANATION = os.getenv("ALERT_INCLUDE_EXPLANATION", "true").lower() in {"1","true","yes"}
 ALERT_MIN_GRADE = os.getenv("ALERT_MIN_GRADE", "A").upper()  # 'A' default for outbound notifications
 
+# Market cap cache configuration
+MARKET_CAP_UPDATE_INTERVAL_SEC = int(os.getenv("MARKET_CAP_UPDATE_INTERVAL_SEC", "3600"))  # 1 hour default
+
 # Analysis recompute scheduler
 ANALYSIS_AUTORUN = os.getenv("ANALYSIS_AUTORUN", "false").lower() in {"1","true","yes"}
 ANALYSIS_AUTORUN_INTERVAL_SEC = int(os.getenv("ANALYSIS_AUTORUN_INTERVAL_SEC", "21600"))  # 6h

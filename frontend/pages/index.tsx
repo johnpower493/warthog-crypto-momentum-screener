@@ -11,6 +11,7 @@ type Metric = {
   change_5m?: number | null;
   change_15m?: number | null;
   change_60m?: number | null;
+  market_cap?: number | null;
   atr?: number | null;
   vol_zscore_1m?: number | null;
   vol_1m?: number | null;
@@ -84,6 +85,7 @@ type SortKey =
   | 'change_5m'
   | 'change_15m'
   | 'change_60m'
+  | 'market_cap'
   | 'atr'
   | 'vol_zscore_1m'
   | 'last_price'
@@ -172,6 +174,7 @@ export default function Home() {
     { key: 'exchange', label: 'Exchange', group: 'Core', mobileDefault: false },
     { key: 'signal', label: 'Signal', group: 'Core', mobileDefault: true },
     { key: 'impulse', label: 'Impulse', group: 'Core', mobileDefault: false },
+    { key: 'marketcap', label: 'Market Cap', group: 'Core', mobileDefault: false },
 
     { key: 'chg1m', label: '1m %', group: 'Returns', mobileDefault: false },
     { key: 'chg5m', label: '5m %', group: 'Returns', mobileDefault: true },
@@ -628,6 +631,7 @@ export default function Home() {
             <select className="select" value={sortKey} onChange={e=>setSortKey(e.target.value as SortKey)}>
               <option value="signal_score">Sort: Signal 🔥</option>
               <option value="impulse_score">Sort: Impulse</option>
+              <option value="market_cap">Sort: Market Cap</option>
               <option value="change_5m">Sort: 5m %</option>
               <option value="change_15m">Sort: 15m %</option>
               <option value="momentum_score">Sort: Momentum</option>
@@ -849,6 +853,11 @@ export default function Home() {
                     Impulse {sortKey==='impulse_score' && (sortDir==='desc'?'↓':'↑')}
                   </th>
                 )}
+                {col('marketcap') && (
+                  <th className="sortable hide-sm" onClick={()=>handleHeaderClick('market_cap')}>
+                    Market Cap {sortKey==='market_cap' && (sortDir==='desc'?'↓':'↑')}
+                  </th>
+                )}
                 <th className="sortable" onClick={()=>handleHeaderClick('last_price')}>
                   Last {sortKey==='last_price' && (sortDir==='desc'?'↓':'↑')}
                 </th>
@@ -917,6 +926,7 @@ export default function Home() {
                   {col('exchange') && <td className="muted hide-xs">{r.exchange || 'binance'}</td>}
                   {col('signal') && <td className={signalClass(r.signal_strength)}>{fmtSignal(r.signal_score, r.signal_strength)}</td>}
                   {col('impulse') && <td className={'hide-sm'}>{fmtImpulse(r.impulse_score, r.impulse_dir)}</td>}
+                  {col('marketcap') && <td className={'hide-sm'}>{fmtMarketCap(r.market_cap)}</td>}
                   <td>{fmt(r.last_price)}</td>
                   {col('chg1m') && <td className={pctClass(r.change_1m) + ' hide-sm'}>{fmtPct(r.change_1m)}</td>}
                   {col('chg5m') && <td className={pctClass(r.change_5m)}>{fmtPct(r.change_5m)}</td>}
@@ -1416,6 +1426,16 @@ function fmtOIPct(n?: number | null) {
   const v = n * 100;
   const sign = v > 0 ? '+' : '';
   return sign + v.toFixed(2) + '%';
+}
+
+function fmtMarketCap(n?: number | null) {
+  if (n === undefined || n === null || Number.isNaN(n)) return '-';
+  const abs = Math.abs(n);
+  if (abs >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
+  if (abs >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `$${(n / 1e3).toFixed(2)}K`;
+  return `$${n.toFixed(2)}`;
 }
 
 function momentumClass(n?: number | null) {
