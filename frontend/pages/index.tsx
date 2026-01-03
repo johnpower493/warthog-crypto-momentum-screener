@@ -219,32 +219,17 @@ export default function Home() {
   };
   const [showColumns, setShowColumns] = useState(false);
   const [mobileMode, setMobileMode] = useState<boolean>(true);
+  const [colsInitialized, setColsInitialized] = useState(false);
 
-  const [cols, setCols] = useState<Record<string, boolean>>(desktopDefaultCols);
+  const [cols, setCols] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
+    if (!colsInitialized) return; // Don't save until after initial load
     try { localStorage.setItem('cols', JSON.stringify(cols)); } catch {}
-  }, [cols]);
+  }, [cols, colsInitialized]);
 
   useEffect(() => {
     try { localStorage.setItem('mobileMode', JSON.stringify(mobileMode)); } catch {}
-  }, [mobileMode]);
-
-  // Auto-apply mobile preset on small screens if mobile mode is enabled
-  useEffect(() => {
-    if (!mobileMode) return;
-    if (typeof window === 'undefined') return;
-    const isSmall = window.matchMedia && window.matchMedia('(max-width: 520px)').matches;
-    if (!isSmall) return;
-
-    // Only apply if user never customized columns
-    try {
-      const raw = localStorage.getItem('cols');
-      if (!raw) {
-        setCols(mobileDefaultCols);
-      }
-    } catch {}
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mobileMode]);
 
   const col = (k: string) => !!cols[k];
@@ -282,12 +267,17 @@ export default function Home() {
     try {
       const rawCols = localStorage.getItem('cols');
       if (rawCols) {
-        setCols((prev) => ({ ...prev, ...JSON.parse(rawCols) }));
+        setCols(JSON.parse(rawCols));
       } else {
         const isSmall = window.matchMedia && window.matchMedia('(max-width: 520px)').matches;
         setCols(isSmall && mm ? mobileDefaultCols : desktopDefaultCols);
       }
-    } catch {}  }, []);
+      setColsInitialized(true);
+    } catch {
+      setColsInitialized(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     // persist favorites
