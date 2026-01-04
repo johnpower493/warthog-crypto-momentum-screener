@@ -673,6 +673,9 @@ export default function Home() {
             <a className="button" href="/analysis" title="Strategy analysis dashboard">
               Analysis
             </a>
+            <a className="button" href="/portfolio" title="Track your positions & PnL">
+              Portfolio
+            </a>
             <a className="button" href="/about" title="Help & documentation">
               About
             </a>

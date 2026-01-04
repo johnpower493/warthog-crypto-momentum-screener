@@ -271,6 +271,159 @@ async def debug_marketcap():
         import traceback
         return {"error": str(e), "traceback": traceback.format_exc()}
 
+# ========================================
+# Portfolio Endpoints
+# ========================================
+
+@app.get("/portfolio/positions")
+async def get_positions():
+    """Get all open positions with real-time PnL."""
+    try:
+        from .services.portfolio import get_portfolio_manager
+        manager = get_portfolio_manager()
+        positions = manager.get_open_positions()
+        
+        # Get current prices from the screener
+        snap = stream_mgr.agg.build_snapshot()  # type: ignore[attr-defined]
+        price_map = {f"{m.exchange}:{m.symbol}": m.last_price for m in snap.metrics}
+        
+        result = []
+        for pos in positions:
+            pos_dict = pos.to_dict()
+            key = f"{pos.exchange}:{pos.symbol}"
+            current_price = price_map.get(key, pos.entry_price)
+            pnl_data = pos.calculate_pnl(current_price)
+            pos_dict.update(pnl_data)
+            result.append(pos_dict)
+        
+        return {"positions": result}
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+@app.post("/portfolio/positions")
+async def add_position(
+    exchange: str,
+    symbol: str,
+    side: str,
+    entry_price: float,
+    quantity: float,
+    stop_loss: float = None,
+    take_profit: float = None,
+    notes: str = None,
+):
+    """Add a new position to the portfolio."""
+    try:
+        from .services.portfolio import get_portfolio_manager
+        manager = get_portfolio_manager()
+        
+        position_id = manager.add_position(
+            exchange=exchange,
+            symbol=symbol,
+            side=side,
+            entry_price=entry_price,
+            quantity=quantity,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            notes=notes,
+        )
+        
+        if position_id:
+            return {"success": True, "position_id": position_id}
+        else:
+            return {"success": False, "error": "Failed to add position"}
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+@app.put("/portfolio/positions/{position_id}")
+async def update_position(
+    position_id: int,
+    stop_loss: float = None,
+    take_profit: float = None,
+    notes: str = None,
+):
+    """Update an existing position."""
+    try:
+        from .services.portfolio import get_portfolio_manager
+        manager = get_portfolio_manager()
+        
+        success = manager.update_position(
+            position_id=position_id,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            notes=notes,
+        )
+        
+        return {"success": success}
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+@app.post("/portfolio/positions/{position_id}/close")
+async def close_position(
+    position_id: int,
+    exit_price: float,
+    notes: str = None,
+):
+    """Close a position."""
+    try:
+        from .services.portfolio import get_portfolio_manager
+        manager = get_portfolio_manager()
+        
+        success = manager.close_position(
+            position_id=position_id,
+            exit_price=exit_price,
+            notes=notes,
+        )
+        
+        return {"success": success}
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+@app.delete("/portfolio/positions/{position_id}")
+async def delete_position(position_id: int):
+    """Delete a position (only if open)."""
+    try:
+        from .services.portfolio import get_portfolio_manager
+        manager = get_portfolio_manager()
+        
+        success = manager.delete_position(position_id)
+        
+        return {"success": success}
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+@app.get("/portfolio/history")
+async def get_trade_history(limit: int = 100):
+    """Get closed positions (trade history)."""
+    try:
+        from .services.portfolio import get_portfolio_manager
+        manager = get_portfolio_manager()
+        
+        trades = manager.get_closed_positions(limit=limit)
+        
+        return {"trades": trades}
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+@app.get("/portfolio/stats")
+async def get_portfolio_stats():
+    """Get portfolio performance statistics."""
+    try:
+        from .services.portfolio import get_portfolio_manager
+        manager = get_portfolio_manager()
+        
+        stats = manager.get_portfolio_stats()
+        
+        return stats
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
 @app.get("/debug/snapshot/all")
 async def debug_snapshot_all():
     try:
