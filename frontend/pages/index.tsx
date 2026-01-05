@@ -175,6 +175,7 @@ export default function Home() {
     { key: 'signal', label: 'Signal', group: 'Core', mobileDefault: true },
     { key: 'impulse', label: 'Impulse', group: 'Core', mobileDefault: false },
     { key: 'marketcap', label: 'Market Cap', group: 'Core', mobileDefault: false },
+    { key: 'action', label: 'Action', group: 'Core', mobileDefault: false },
 
     { key: 'chg1m', label: '1m %', group: 'Returns', mobileDefault: false },
     { key: 'chg5m', label: '5m %', group: 'Returns', mobileDefault: true },
@@ -222,6 +223,17 @@ export default function Home() {
   const [colsInitialized, setColsInitialized] = useState(false);
 
   const [cols, setCols] = useState<Record<string, boolean>>({});
+
+  // Quick add to portfolio
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [quickAddSymbol, setQuickAddSymbol] = useState<Metric | null>(null);
+  const [quickAddForm, setQuickAddForm] = useState({
+    side: 'LONG' as 'LONG' | 'SHORT',
+    quantity: '',
+    stop_loss: '',
+    take_profit: '',
+    notes: '',
+  });
 
   useEffect(() => {
     if (!colsInitialized) return; // Don't save until after initial load
@@ -540,6 +552,54 @@ export default function Home() {
       }));
     } catch (e) {
       setModal((m) => ({ ...m, open: true, row: r, closes: [], oi: [], loading: false }));
+    }
+  };
+
+  const handleQuickAdd = (r: Metric, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setQuickAddSymbol(r);
+    setQuickAddForm({
+      side: 'LONG',
+      quantity: '',
+      stop_loss: '',
+      take_profit: '',
+      notes: '',
+    });
+    setShowQuickAdd(true);
+  };
+
+  const submitQuickAdd = async () => {
+    if (!quickAddSymbol || !quickAddForm.quantity) {
+      alert('Please enter quantity');
+      return;
+    }
+
+    try {
+      const resp = await fetch(`${resolvedBackendHttp}/portfolio/positions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          exchange: quickAddSymbol.exchange || 'binance',
+          symbol: quickAddSymbol.symbol,
+          side: quickAddForm.side,
+          entry_price: quickAddSymbol.last_price,
+          quantity: parseFloat(quickAddForm.quantity),
+          stop_loss: quickAddForm.stop_loss ? parseFloat(quickAddForm.stop_loss) : null,
+          take_profit: quickAddForm.take_profit ? parseFloat(quickAddForm.take_profit) : null,
+          notes: quickAddForm.notes || null,
+        }),
+      });
+
+      if (resp.ok) {
+        setShowQuickAdd(false);
+        setQuickAddSymbol(null);
+        alert('✅ Position added to portfolio!');
+      } else {
+        alert('Failed to add position');
+      }
+    } catch (e) {
+      console.error('Error adding position:', e);
+      alert('Error adding position');
     }
   };
 
@@ -907,6 +967,7 @@ export default function Home() {
                 {col('rvol1m') && <th className="hide-md">RVOL 1m</th>}
                 {col('breakout15m') && <th className="hide-md">Breakout 15m</th>}
                 {col('vwap15m') && <th className="hide-md">VWAP 15m</th>}
+                {col('action') && <th className="hide-sm">Action</th>}
               </tr>
             </thead>
             <tbody>
@@ -938,6 +999,18 @@ export default function Home() {
                   {col('rvol1m') && <td className={'hide-md'}>{fmt(r.rvol_1m)}</td>}
                   {col('breakout15m') && <td className={pctClass(r.breakout_15m) + ' hide-md'}>{fmtPct(r.breakout_15m)}</td>}
                   {col('vwap15m') && <td className={'hide-md'}>{fmt(r.vwap_15m)}</td>}
+                  {col('action') && (
+                    <td className="hide-sm">
+                      <button 
+                        className="button" 
+                        onClick={(e) => handleQuickAdd(r, e)}
+                        style={{ fontSize: 11, padding: '4px 8px' }}
+                        title="Add to portfolio"
+                      >
+                        + Portfolio
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -989,9 +1062,126 @@ export default function Home() {
             const next = sorted[(i + dir + sorted.length) % sorted.length];
             openDetails(next);
           }}
+          onQuickAddToPortfolio={() => {
+            if (modal.row) {
+              handleQuickAdd(modal.row, { stopPropagation: () => {} } as React.MouseEvent);
+            }
+          }}
           backendWs={resolvedWsUrl}
         />
       )}
+
+      {/* Quick Add to Portfolio Modal */}
+      {showQuickAdd && quickAddSymbol && (
+        <div className="modal-overlay" onClick={() => setShowQuickAdd(false)}>
+          <div className="modal-quick-add" onClick={(e) => e.stopPropagation()}>
+            <h2>Add {quickAddSymbol.symbol} to Portfolio</h2>
+            <div className="muted" style={{ marginBottom: 12, fontSize: 13 }}>
+              Entry Price: <strong>{fmt(quickAddSymbol.last_price)}</strong>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={{ fontSize: 13, fontWeight: 500 }}>Side *</span>
+                <select
+                  className="input"
+                  value={quickAddForm.side}
+                  onChange={(e) => setQuickAddForm({ ...quickAddForm, side: e.target.value as 'LONG' | 'SHORT' })}
+                >
+                  <option value="LONG">LONG</option>
+                  <option value="SHORT">SHORT</option>
+                </select>
+              </label>
+
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={{ fontSize: 13, fontWeight: 500 }}>Quantity *</span>
+                <input
+                  className="input"
+                  type="number"
+                  step="any"
+                  placeholder="e.g., 0.1"
+                  value={quickAddForm.quantity}
+                  onChange={(e) => setQuickAddForm({ ...quickAddForm, quantity: e.target.value })}
+                  autoFocus
+                />
+              </label>
+
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={{ fontSize: 13, fontWeight: 500 }}>Stop Loss (optional)</span>
+                <input
+                  className="input"
+                  type="number"
+                  step="any"
+                  placeholder="Optional"
+                  value={quickAddForm.stop_loss}
+                  onChange={(e) => setQuickAddForm({ ...quickAddForm, stop_loss: e.target.value })}
+                />
+              </label>
+
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={{ fontSize: 13, fontWeight: 500 }}>Take Profit (optional)</span>
+                <input
+                  className="input"
+                  type="number"
+                  step="any"
+                  placeholder="Optional"
+                  value={quickAddForm.take_profit}
+                  onChange={(e) => setQuickAddForm({ ...quickAddForm, take_profit: e.target.value })}
+                />
+              </label>
+
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={{ fontSize: 13, fontWeight: 500 }}>Notes (optional)</span>
+                <textarea
+                  className="input"
+                  placeholder="Optional notes"
+                  value={quickAddForm.notes}
+                  onChange={(e) => setQuickAddForm({ ...quickAddForm, notes: e.target.value })}
+                  rows={2}
+                  style={{ resize: 'vertical', fontFamily: 'inherit' }}
+                />
+              </label>
+
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <button className="button" onClick={submitQuickAdd} style={{ flex: 1 }}>
+                  Add Position
+                </button>
+                <button className="button" onClick={() => setShowQuickAdd(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style jsx>{`
+        .modal-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(0, 0, 0, 0.7);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 10000;
+        }
+        .modal-quick-add {
+          background: var(--bg-secondary, #1a1a2e);
+          border: 1px solid var(--border, #333);
+          border-radius: 8px;
+          padding: 24px;
+          max-width: 400px;
+          width: 90%;
+          max-height: 90vh;
+          overflow-y: auto;
+        }
+        .modal-quick-add h2 {
+          margin: 0 0 16px 0;
+          font-size: 18px;
+        }
+      `}</style>
     </div>
   );
 }
@@ -1072,6 +1262,7 @@ function DetailsModal({
   onToggleFav,
   onClose,
   onNavigate,
+  onQuickAddToPortfolio,
   backendWs,
 }: {
   row: Metric;
@@ -1085,6 +1276,7 @@ function DetailsModal({
   onToggleFav: () => void;
   onClose: () => void;
   onNavigate: (dir: -1 | 1) => void;
+  onQuickAddToPortfolio?: () => void;
   backendWs: string;
 }) {
   const exchange = row.exchange || 'binance';
@@ -1196,6 +1388,11 @@ function DetailsModal({
             <a className="button" href={tvUrl} target="_blank" rel="noreferrer" title="Open in TradingView">
               TradingView
             </a>
+            {onQuickAddToPortfolio && (
+              <button className="button" onClick={onQuickAddToPortfolio} title="Add to portfolio">
+                + Portfolio
+              </button>
+            )}
             <button className="button" onClick={onClose}>
               Close
             </button>

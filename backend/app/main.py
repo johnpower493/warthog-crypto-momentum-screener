@@ -302,30 +302,21 @@ async def get_positions():
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 @app.post("/portfolio/positions")
-async def add_position(
-    exchange: str,
-    symbol: str,
-    side: str,
-    entry_price: float,
-    quantity: float,
-    stop_loss: float = None,
-    take_profit: float = None,
-    notes: str = None,
-):
+async def add_position(body: dict):
     """Add a new position to the portfolio."""
     try:
         from .services.portfolio import get_portfolio_manager
         manager = get_portfolio_manager()
         
         position_id = manager.add_position(
-            exchange=exchange,
-            symbol=symbol,
-            side=side,
-            entry_price=entry_price,
-            quantity=quantity,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
-            notes=notes,
+            exchange=body.get("exchange", "binance"),
+            symbol=body["symbol"],
+            side=body["side"],
+            entry_price=body["entry_price"],
+            quantity=body["quantity"],
+            stop_loss=body.get("stop_loss"),
+            take_profit=body.get("take_profit"),
+            notes=body.get("notes"),
         )
         
         if position_id:
