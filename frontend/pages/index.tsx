@@ -80,6 +80,17 @@ type Backtest = {
   avg_bars_to_resolve: number;
 };
 
+type NewsArticle = {
+  id: string;
+  title: string;
+  body: string;
+  url: string;
+  source: string;
+  published: number;
+  image_url?: string;
+  tags?: string[];
+};
+
 type SortKey =
   | 'change_1m'
   | 'change_5m'
@@ -118,6 +129,8 @@ export default function Home() {
     plan?: TradePlan | null;
     bt30?: any;
     bt90?: any;
+    news?: NewsArticle[];
+    newsLoading?: boolean;
   }>({ open: false });
   const [query, setQuery] = useState('');
 
@@ -523,22 +536,24 @@ export default function Home() {
       process.env.NEXT_PUBLIC_BACKEND_HTTP ||
       (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}:8000` : 'http://127.0.0.1:8000');
 
-    // Show modal immediately with row data; load history + plan + backtests async
-    setModal({ open: true, row: r, closes: [], oi: [], loading: true, plan: null, bt30: null, bt90: null });
+    // Show modal immediately with row data; load history + plan + backtests + news async
+    setModal({ open: true, row: r, closes: [], oi: [], loading: true, plan: null, bt30: null, bt90: null, news: [], newsLoading: true });
 
     try {
-      const [histResp, oiResp, planResp, bt30Resp, bt90Resp] = await Promise.all([
+      const [histResp, oiResp, planResp, bt30Resp, bt90Resp, newsResp] = await Promise.all([
         fetch(`${backendBase}/debug/history?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&limit=60`),
         fetch(`${backendBase}/debug/oi_history?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&limit=60`),
         fetch(`${backendBase}/meta/trade_plan?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}`),
         fetch(`${backendBase}/meta/backtest?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&window_days=30`),
         fetch(`${backendBase}/meta/backtest?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&window_days=90`),
+        fetch(`${backendBase}/news/${encodeURIComponent(exchange)}/${encodeURIComponent(r.symbol)}`),
       ]);
       const j = histResp.ok ? await histResp.json() : { closes: [] };
       const o = oiResp.ok ? await oiResp.json() : { oi: [] };
       const p = planResp.ok ? await planResp.json() : { plan: null };
       const b30 = bt30Resp.ok ? await bt30Resp.json() : null;
       const b90 = bt90Resp.ok ? await bt90Resp.json() : null;
+      const n = newsResp.ok ? await newsResp.json() : { articles: [] };
       setModal((m) => ({
         ...m,
         open: true,
@@ -548,10 +563,12 @@ export default function Home() {
         plan: p.plan || null,
         bt30: b30 && b30.result ? ({ window_days: 30, ...b30 } as any) : null,
         bt90: b90 && b90.result ? ({ window_days: 90, ...b90 } as any) : null,
+        news: n.articles || [],
+        newsLoading: false,
         loading: false,
       }));
     } catch (e) {
-      setModal((m) => ({ ...m, open: true, row: r, closes: [], oi: [], loading: false }));
+      setModal((m) => ({ ...m, open: true, row: r, closes: [], oi: [], news: [], newsLoading: false, loading: false }));
     }
   };
 
@@ -1053,6 +1070,8 @@ export default function Home() {
           plan={modal.plan || null}
           bt30={modal.bt30 || null}
           bt90={modal.bt90 || null}
+          news={modal.news || []}
+          newsLoading={!!modal.newsLoading}
           isFav={favs.includes(idOf(modal.row))}
           onToggleFav={() => toggleFav(idOf(modal.row!), favs, setFavs)}
           onClose={() => setModal({ open: false })}
@@ -1258,6 +1277,8 @@ function DetailsModal({
   plan,
   bt30,
   bt90,
+  news,
+  newsLoading,
   isFav,
   onToggleFav,
   onClose,
@@ -1272,6 +1293,8 @@ function DetailsModal({
   plan: TradePlan | null;
   bt30: any;
   bt90: any;
+  news: NewsArticle[];
+  newsLoading: boolean;
   isFav: boolean;
   onToggleFav: () => void;
   onClose: () => void;
@@ -1279,6 +1302,7 @@ function DetailsModal({
   onQuickAddToPortfolio?: () => void;
   backendWs: string;
 }) {
+  const [activeTab, setActiveTab] = useState<'overview' | 'plan' | 'news'>('overview');
   const exchange = row.exchange || 'binance';
   const symbol = row.symbol;
 
@@ -1365,210 +1389,437 @@ function DetailsModal({
   return (
     <div className="modalOverlay" onClick={onClose}>
       <div className="panel modalSheet" onClick={(e) => e.stopPropagation()}>
-        <div className="toolbar" style={{ position: 'sticky', top: 0, zIndex: 10, background: 'rgba(12,19,30,0.92)', backdropFilter: 'blur(8px)' }}>
+        <div className="toolbar" style={{ position: 'sticky', top: 0, zIndex: 10, background: 'rgba(12,19,30,0.98)', backdropFilter: 'blur(12px)', borderBottom: '1px solid var(--border)' }}>
           <div className="modalHandle" />
-          <div className="group" style={{ gap: 10, alignItems: 'center' }}>
-            <span className="badge">{exchange}</span>
-            <strong style={{ fontSize: 16 }}>{symbol}</strong>
-            <span className={"star " + (isFav ? 'active' : '')} onClick={onToggleFav} title="Toggle favorite">
-              ★
-            </span>
-            <span className="badge">Signal: {fmtSignal(row.signal_score, row.signal_strength)}</span>
+          <div className="group" style={{ gap: 12, alignItems: 'center', flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span className={"star " + (isFav ? 'active' : '')} onClick={onToggleFav} title="Toggle favorite" style={{ fontSize: 18, cursor: 'pointer' }}>
+                ★
+              </span>
+              <strong style={{ fontSize: 20, fontWeight: 700 }}>{symbol}</strong>
+              <span className="badge" style={{ fontSize: 11 }}>{exchange}</span>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div className="badge" style={{ fontSize: 13, fontWeight: 600 }}>
+                ${fmt(row.last_price)}
+              </div>
+              <div className={`badge ${pctClass(row.change_5m)}`} style={{ fontSize: 12 }}>
+                5m: {fmtPct(row.change_5m)}
+              </div>
+              <div className={`badge ${signalClass(row.signal_strength)}`} style={{ fontSize: 12 }}>
+                {fmtSignal(row.signal_score, row.signal_strength)}
+              </div>
+            </div>
           </div>
-          <div className="group">
-            <button className="button" onClick={() => onNavigate(-1)} title="Previous (↑)">
-              Prev
+          <div className="group" style={{ gap: 6 }}>
+            <button className="button" onClick={() => onNavigate(-1)} title="Previous (←)" style={{ padding: '6px 12px' }}>
+              ←
             </button>
-            <button className="button" onClick={() => onNavigate(1)} title="Next (↓)">
-              Next
+            <button className="button" onClick={() => onNavigate(1)} title="Next (→)" style={{ padding: '6px 12px' }}>
+              →
             </button>
             <button className="button" onClick={() => copy(symbol)} title="Copy symbol">
               Copy
             </button>
             <a className="button" href={tvUrl} target="_blank" rel="noreferrer" title="Open in TradingView">
-              TradingView
+              Chart
             </a>
             {onQuickAddToPortfolio && (
               <button className="button" onClick={onQuickAddToPortfolio} title="Add to portfolio">
-                + Portfolio
+                + Position
               </button>
             )}
-            <button className="button" onClick={onClose}>
-              Close
+            <button className="button" onClick={onClose} style={{ fontWeight: 600 }}>
+              ✕
             </button>
           </div>
         </div>
+        
+        {/* Tab Navigation */}
+        <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', padding: '0 12px', background: 'var(--bg-secondary)' }}>
+          <button 
+            className={`button ${activeTab === 'overview' ? '' : ''}`}
+            onClick={() => setActiveTab('overview')}
+            style={{ 
+              border: 'none',
+              borderBottom: activeTab === 'overview' ? '2px solid var(--accent, #4a9eff)' : '2px solid transparent',
+              borderRadius: 0,
+              padding: '12px 20px',
+              marginBottom: '-2px',
+              fontWeight: activeTab === 'overview' ? 600 : 400,
+              background: 'transparent',
+              opacity: activeTab === 'overview' ? 1 : 0.6
+            }}
+          >
+            Overview
+          </button>
+          <button 
+            className={`button ${activeTab === 'plan' ? '' : ''}`}
+            onClick={() => setActiveTab('plan')}
+            style={{ 
+              border: 'none',
+              borderBottom: activeTab === 'plan' ? '2px solid var(--accent, #4a9eff)' : '2px solid transparent',
+              borderRadius: 0,
+              padding: '12px 20px',
+              marginBottom: '-2px',
+              fontWeight: activeTab === 'plan' ? 600 : 400,
+              background: 'transparent',
+              opacity: activeTab === 'plan' ? 1 : 0.6
+            }}
+          >
+            Trade Plan
+          </button>
+          <button 
+            className={`button ${activeTab === 'news' ? '' : ''}`}
+            onClick={() => setActiveTab('news')}
+            style={{ 
+              border: 'none',
+              borderBottom: activeTab === 'news' ? '2px solid var(--accent, #4a9eff)' : '2px solid transparent',
+              borderRadius: 0,
+              padding: '12px 20px',
+              marginBottom: '-2px',
+              fontWeight: activeTab === 'news' ? 600 : 400,
+              background: 'transparent',
+              opacity: activeTab === 'news' ? 1 : 0.6
+            }}
+          >
+            📰 News
+          </button>
+        </div>
 
-        <div className="detailsGrid" style={{ padding: 12, display: 'grid', gridTemplateColumns: '260px 1fr', gap: 12 }}>
-          <div>
-            <div className="badge" style={{ display: 'inline-block', marginBottom: 8 }}>
-              Last: {fmt(row.last_price)}
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              <Stat label="1m" value={fmtPct(row.change_1m)} className={pctClass(row.change_1m)} />
-              <Stat label="5m" value={fmtPct(row.change_5m)} className={pctClass(row.change_5m)} />
-              <Stat label="15m" value={fmtPct(row.change_15m)} className={pctClass(row.change_15m)} />
-              <Stat label="60m" value={fmtPct(row.change_60m)} className={pctClass(row.change_60m)} />
-              <Stat label="ATR" value={fmt(row.atr)} className="muted" />
-              <Stat label="Vol Z" value={fmt(row.vol_zscore_1m)} className="muted" />
-              <Stat label="Momentum" value={fmtMomentum(row.momentum_score)} className={momentumClass(row.momentum_score)} />
-              <Stat label="OI" value={fmtOI(row.open_interest)} className="muted" />
-              <Stat label="OI Δ 5m" value={fmtOIPct(row.oi_change_5m)} className={oiClass(row.oi_change_5m)} />
-              <Stat label="OI Δ 15m" value={fmtOIPct(row.oi_change_15m)} className={oiClass(row.oi_change_15m)} />
-            </div>
-
-            <div className="muted" style={{ marginTop: 10, fontSize: 12 }}>
-              Tip: use ↑ / ↓ to navigate, Esc to close.
-            </div>
-          </div>
-
-          <div>
-            <div className="chartsGrid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div style={{ padding: 16 }}>
+            {activeTab === 'overview' && (
               <div>
-                <div className="muted" style={{ marginBottom: 6 }}>
-                  Last 60 x 1m closes {loading ? '(loading...)' : ''}
-                </div>
-                <Sparkline data={closes || []} />
-              </div>
-              <div>
-                <div className="muted" style={{ marginBottom: 6 }}>
-                  Open Interest Δ (last 60)
-                </div>
-                <Sparkline data={toDeltaSeries(oi || [])} color={deltaColor(oi || [])} />
-              </div>
-            </div>
-
-            <div style={{ marginTop: 12 }}>
-              <div className="muted" style={{ marginBottom: 6 }}>Trade Plan</div>
-              {!plan && <div className="muted">No plan yet.</div>}
-              {plan && (
-                <div className="card" style={{ padding: 10 }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                    <Stat label="Side" value={String(plan.side)} className="muted" />
-                    <Stat label="Entry" value={fmt(plan.entry_price)} className="muted" />
-                    <Stat label="Stop" value={fmt(plan.stop_loss)} className="chgDown" />
-                    <Stat label="TP1" value={fmt(plan.tp1)} className="chgUp" />
-                    <Stat label="TP2" value={fmt(plan.tp2)} className="chgUp" />
-                    <Stat label="TP3" value={fmt(plan.tp3)} className="chgUp" />
-                    <Stat label="ATR" value={fmt(plan.atr)} className="muted" />
-                    <Stat label="ATR Mult" value={plan.atr_mult!=null ? String(plan.atr_mult) : '-'} className="muted" />
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div style={{ marginTop: 12 }}>
-              <div className="muted" style={{ marginBottom: 6 }}>Recent Performance</div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                <Stat label="30d Trades" value={bt30?.n_trades!=null ? String(bt30.n_trades) : '-'} className="muted" />
-                <Stat label="30d Win%" value={bt30?.win_rate!=null ? (bt30.win_rate*100).toFixed(1)+'%' : '-'} className="muted" />
-                <Stat label="30d Avg R" value={bt30?.avg_r!=null ? Number(bt30.avg_r).toFixed(2) : '-'} className="muted" />
-                <Stat label="90d Trades" value={bt90?.n_trades!=null ? String(bt90.n_trades) : '-'} className="muted" />
-                <Stat label="90d Win%" value={bt90?.win_rate!=null ? (bt90.win_rate*100).toFixed(1)+'%' : '-'} className="muted" />
-                <Stat label="90d Avg R" value={bt90?.avg_r!=null ? Number(bt90.avg_r).toFixed(2) : '-'} className="muted" />
-              </div>
-            </div>
-
-            <div style={{ marginTop: 12 }}>
-              <div className="muted" style={{ marginBottom: 6 }}>Order Flow (Footprint) – 1m</div>
-              {footprintStatus === 'loading' && <div className="muted">Loading...</div>}
-              {footprintStatus === 'idle' && <div className="muted">Disconnected</div>}
-              {footprintStatus === 'connected' && footprintCandles.length === 0 && <div className="muted">No data yet</div>}
-              {footprintStatus === 'connected' && footprintCandles.length > 0 && (
-                <>
-                  {/* CVD Chart */}
-                  <div className="card" style={{ padding: 10, marginBottom: 8 }}>
-                    <div style={{ fontSize: 11, marginBottom: 4, color: '#aaa' }}>CVD (Cumulative Volume Delta)</div>
-                    <div style={{ position: 'relative', height: 60, background: 'rgba(0,0,0,0.2)', borderRadius: 4 }}>
-                      <svg width="100%" height="60" style={{ display: 'block' }}>
-                        {footprintCandles.slice(-30).map((c: any, i: number, arr: any[]) => {
-                          if (i === 0) return null;
-                          const x1 = ((i - 1) / (arr.length - 1)) * 100;
-                          const x2 = (i / (arr.length - 1)) * 100;
-                          const minCvd = Math.min(...arr.map((x: any) => x.cvd || 0));
-                          const maxCvd = Math.max(...arr.map((x: any) => x.cvd || 0));
-                          const range = maxCvd - minCvd || 1;
-                          const y1 = 50 - (((arr[i - 1].cvd || 0) - minCvd) / range) * 40;
-                          const y2 = 50 - (((c.cvd || 0) - minCvd) / range) * 40;
-                          const color = (c.cvd || 0) >= 0 ? '#3ee145' : '#e13e3e';
-                          return (
-                            <line
-                              key={i}
-                              x1={`${x1}%`}
-                              y1={y1}
-                              x2={`${x2}%`}
-                              y2={y2}
-                              stroke={color}
-                              strokeWidth="2"
-                            />
-                          );
-                        })}
-                      </svg>
-                      <div style={{ position: 'absolute', top: 2, right: 4, fontSize: 10, color: '#aaa' }}>
-                        {(footprintCandles[footprintCandles.length - 1]?.cvd || 0).toFixed(2)}
+                {/* Key Metrics Cards */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
+                  <div className="card" style={{ padding: 12 }}>
+                    <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>Price Changes</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                        <span>1m</span>
+                        <span className={pctClass(row.change_1m)} style={{ fontWeight: 600 }}>{fmtPct(row.change_1m)}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                        <span>5m</span>
+                        <span className={pctClass(row.change_5m)} style={{ fontWeight: 600 }}>{fmtPct(row.change_5m)}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                        <span>15m</span>
+                        <span className={pctClass(row.change_15m)} style={{ fontWeight: 600 }}>{fmtPct(row.change_15m)}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                        <span>60m</span>
+                        <span className={pctClass(row.change_60m)} style={{ fontWeight: 600 }}>{fmtPct(row.change_60m)}</span>
                       </div>
                     </div>
                   </div>
 
-                  {/* Footprint Table with Imbalance Highlighting */}
-                  <div className="card" style={{ padding: 10, maxHeight: 300, overflowY: 'auto' }}>
-                    <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
-                      <thead>
-                        <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-                          <th style={{ textAlign: 'left', padding: 4 }}>Time</th>
-                          <th style={{ textAlign: 'right', padding: 4 }}>Bid Vol</th>
-                          <th style={{ textAlign: 'right', padding: 4 }}>Ask Vol</th>
-                          <th style={{ textAlign: 'right', padding: 4 }}>Delta</th>
-                          <th style={{ textAlign: 'right', padding: 4 }}>CVD</th>
-                          <th style={{ textAlign: 'right', padding: 4 }}>Levels</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {footprintCandles.slice(-8).reverse().map((c: any, i: number) => {
-                          const bid = c.bid || 0;
-                          const ask = c.ask || 0;
-                          const delta = c.delta || 0;
-                          const cvd = c.cvd || 0;
-                          const deltaColor = delta >= 0 ? '#3ee145' : '#e13e3e';
-                          const cvdColor = cvd >= 0 ? '#3ee145' : '#e13e3e';
-                          
-                          // Imbalance detection: ratio > 3:1
-                          const ratio = ask > 0 && bid > 0 ? Math.max(ask / bid, bid / ask) : 0;
-                          const isImbalance = ratio > 3;
-                          const imbalanceColor = ask > bid ? 'rgba(62, 225, 69, 0.15)' : 'rgba(225, 62, 62, 0.15)';
-                          
-                          return (
-                            <tr 
-                              key={c.open_ts || i} 
-                              style={{ 
-                                borderBottom: '1px solid rgba(255,255,255,0.05)',
-                                background: isImbalance ? imbalanceColor : 'transparent'
-                              }}
-                            >
-                              <td style={{ padding: 4 }}>
-                                {new Date(c.open_ts).toLocaleTimeString()}
-                                {isImbalance && <span style={{ marginLeft: 4 }}>🔥</span>}
-                              </td>
-                              <td style={{ textAlign: 'right', padding: 4, color: '#e13e3e' }}>{bid.toFixed(2)}</td>
-                              <td style={{ textAlign: 'right', padding: 4, color: '#3ee145' }}>{ask.toFixed(2)}</td>
-                              <td style={{ textAlign: 'right', padding: 4, color: deltaColor, fontWeight: 600 }}>
-                                {delta >= 0 ? '+' : ''}{delta.toFixed(2)}
-                              </td>
-                              <td style={{ textAlign: 'right', padding: 4, color: cvdColor, fontSize: 11 }}>
-                                {cvd >= 0 ? '+' : ''}{cvd.toFixed(2)}
-                              </td>
-                              <td style={{ textAlign: 'right', padding: 4 }} className="muted">{(c.levels || []).length}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                  <div className="card" style={{ padding: 12 }}>
+                    <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>Momentum</div>
+                    <div style={{ fontSize: 24, fontWeight: 700, marginBottom: 4 }} className={momentumClass(row.momentum_score)}>
+                      {fmtMomentum(row.momentum_score)}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 12 }}>
+                      <div className="muted">5m: {fmtPct(row.momentum_5m)}</div>
+                      <div className="muted">15m: {fmtPct(row.momentum_15m)}</div>
+                    </div>
                   </div>
-                </>
-              )}
-            </div>
-          </div>
+
+                  <div className="card" style={{ padding: 12 }}>
+                    <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>Volatility</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div>
+                        <div className="muted" style={{ fontSize: 11 }}>ATR</div>
+                        <div style={{ fontSize: 16, fontWeight: 600 }}>{fmt(row.atr)}</div>
+                      </div>
+                      <div>
+                        <div className="muted" style={{ fontSize: 11 }}>Vol Z-Score</div>
+                        <div style={{ fontSize: 16, fontWeight: 600 }}>{fmt(row.vol_zscore_1m)}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="card" style={{ padding: 12 }}>
+                    <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>Open Interest</div>
+                    <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 6 }}>{fmtOI(row.open_interest)}</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 12 }}>
+                      <div className={oiClass(row.oi_change_5m)}>5m: {fmtOIPct(row.oi_change_5m)}</div>
+                      <div className={oiClass(row.oi_change_15m)}>15m: {fmtOIPct(row.oi_change_15m)}</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Price Charts */}
+                <div className="chartsGrid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div className="card" style={{ padding: 12 }}>
+                    <div className="muted" style={{ marginBottom: 8, fontSize: 12, fontWeight: 600 }}>
+                      Last 60 x 1m closes {loading ? '(loading...)' : ''}
+                    </div>
+                    <Sparkline data={closes || []} />
+                  </div>
+                  <div className="card" style={{ padding: 12 }}>
+                    <div className="muted" style={{ marginBottom: 8, fontSize: 12, fontWeight: 600 }}>
+                      Open Interest Δ (last 60)
+                    </div>
+                    <Sparkline data={toDeltaSeries(oi || [])} color={deltaColor(oi || [])} />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'plan' && (
+              <div>
+                {/* Trade Plan Section */}
+                {plan ? (
+                  <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+                    <h3 style={{ margin: '0 0 12px 0', fontSize: 16, fontWeight: 600 }}>Trade Plan</h3>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12 }}>
+                      <div>
+                        <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>Side</div>
+                        <div className={plan.side === 'LONG' ? 'chgUp' : 'chgDown'} style={{ fontSize: 18, fontWeight: 700 }}>
+                          {String(plan.side)}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>Entry</div>
+                        <div style={{ fontSize: 16, fontWeight: 600 }}>{fmt(plan.entry_price)}</div>
+                      </div>
+                      <div>
+                        <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>Stop Loss</div>
+                        <div className="chgDown" style={{ fontSize: 16, fontWeight: 600 }}>{fmt(plan.stop_loss)}</div>
+                      </div>
+                      <div>
+                        <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>Take Profit 1</div>
+                        <div className="chgUp" style={{ fontSize: 16, fontWeight: 600 }}>{fmt(plan.tp1)}</div>
+                      </div>
+                      <div>
+                        <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>Take Profit 2</div>
+                        <div className="chgUp" style={{ fontSize: 16, fontWeight: 600 }}>{fmt(plan.tp2)}</div>
+                      </div>
+                      <div>
+                        <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>Take Profit 3</div>
+                        <div className="chgUp" style={{ fontSize: 16, fontWeight: 600 }}>{fmt(plan.tp3)}</div>
+                      </div>
+                      <div>
+                        <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>ATR</div>
+                        <div style={{ fontSize: 14 }}>{fmt(plan.atr)}</div>
+                      </div>
+                      <div>
+                        <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>ATR Mult</div>
+                        <div style={{ fontSize: 14 }}>{plan.atr_mult!=null ? String(plan.atr_mult) : '-'}</div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="card" style={{ padding: 16, marginBottom: 16, textAlign: 'center' }}>
+                    <div className="muted">No trade plan available yet.</div>
+                  </div>
+                )}
+
+                {/* Backtest Performance */}
+                <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+                  <h3 style={{ margin: '0 0 12px 0', fontSize: 16, fontWeight: 600 }}>Backtest Performance</h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                    <div>
+                      <div className="muted" style={{ fontSize: 12, marginBottom: 8, fontWeight: 600 }}>30 Days</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                          <span className="muted">Trades</span>
+                          <span style={{ fontWeight: 600 }}>{bt30?.n_trades!=null ? String(bt30.n_trades) : '-'}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                          <span className="muted">Win Rate</span>
+                          <span style={{ fontWeight: 600 }}>{bt30?.win_rate!=null ? (bt30.win_rate*100).toFixed(1)+'%' : '-'}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                          <span className="muted">Avg R</span>
+                          <span style={{ fontWeight: 600 }}>{bt30?.avg_r!=null ? Number(bt30.avg_r).toFixed(2) : '-'}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div>
+                      <div className="muted" style={{ fontSize: 12, marginBottom: 8, fontWeight: 600 }}>90 Days</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                          <span className="muted">Trades</span>
+                          <span style={{ fontWeight: 600 }}>{bt90?.n_trades!=null ? String(bt90.n_trades) : '-'}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                          <span className="muted">Win Rate</span>
+                          <span style={{ fontWeight: 600 }}>{bt90?.win_rate!=null ? (bt90.win_rate*100).toFixed(1)+'%' : '-'}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                          <span className="muted">Avg R</span>
+                          <span style={{ fontWeight: 600 }}>{bt90?.avg_r!=null ? Number(bt90.avg_r).toFixed(2) : '-'}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 12 }}>
+                  <div className="muted" style={{ marginBottom: 6 }}>Order Flow (Footprint) – 1m</div>
+                  {footprintStatus === 'loading' && <div className="muted">Loading...</div>}
+                  {footprintStatus === 'idle' && <div className="muted">Disconnected</div>}
+                  {footprintStatus === 'connected' && footprintCandles.length === 0 && <div className="muted">No data yet</div>}
+                  {footprintStatus === 'connected' && footprintCandles.length > 0 && (
+                    <>
+                      {/* CVD Chart */}
+                      <div className="card" style={{ padding: 10, marginBottom: 8 }}>
+                        <div style={{ fontSize: 11, marginBottom: 4, color: '#aaa' }}>CVD (Cumulative Volume Delta)</div>
+                        <div style={{ position: 'relative', height: 60, background: 'rgba(0,0,0,0.2)', borderRadius: 4 }}>
+                          <svg width="100%" height="60" style={{ display: 'block' }}>
+                            {footprintCandles.slice(-30).map((c: any, i: number, arr: any[]) => {
+                              if (i === 0) return null;
+                              const x1 = ((i - 1) / (arr.length - 1)) * 100;
+                              const x2 = (i / (arr.length - 1)) * 100;
+                              const minCvd = Math.min(...arr.map((x: any) => x.cvd || 0));
+                              const maxCvd = Math.max(...arr.map((x: any) => x.cvd || 0));
+                              const range = maxCvd - minCvd || 1;
+                              const y1 = 50 - (((arr[i - 1].cvd || 0) - minCvd) / range) * 40;
+                              const y2 = 50 - (((c.cvd || 0) - minCvd) / range) * 40;
+                              const color = (c.cvd || 0) >= 0 ? '#3ee145' : '#e13e3e';
+                              return (
+                                <line
+                                  key={i}
+                                  x1={`${x1}%`}
+                                  y1={y1}
+                                  x2={`${x2}%`}
+                                  y2={y2}
+                                  stroke={color}
+                                  strokeWidth="2"
+                                />
+                              );
+                            })}
+                          </svg>
+                          <div style={{ position: 'absolute', top: 2, right: 4, fontSize: 10, color: '#aaa' }}>
+                            {(footprintCandles[footprintCandles.length - 1]?.cvd || 0).toFixed(2)}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Footprint Table with Imbalance Highlighting */}
+                      <div className="card" style={{ padding: 10, maxHeight: 300, overflowY: 'auto' }}>
+                        <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                              <th style={{ textAlign: 'left', padding: 4 }}>Time</th>
+                              <th style={{ textAlign: 'right', padding: 4 }}>Bid Vol</th>
+                              <th style={{ textAlign: 'right', padding: 4 }}>Ask Vol</th>
+                              <th style={{ textAlign: 'right', padding: 4 }}>Delta</th>
+                              <th style={{ textAlign: 'right', padding: 4 }}>CVD</th>
+                              <th style={{ textAlign: 'right', padding: 4 }}>Levels</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {footprintCandles.slice(-8).reverse().map((c: any, i: number) => {
+                              const bid = c.bid || 0;
+                              const ask = c.ask || 0;
+                              const delta = c.delta || 0;
+                              const cvd = c.cvd || 0;
+                              const deltaColor = delta >= 0 ? '#3ee145' : '#e13e3e';
+                              const cvdColor = cvd >= 0 ? '#3ee145' : '#e13e3e';
+                              
+                              // Imbalance detection: ratio > 3:1
+                              const ratio = ask > 0 && bid > 0 ? Math.max(ask / bid, bid / ask) : 0;
+                              const isImbalance = ratio > 3;
+                              const imbalanceColor = ask > bid ? 'rgba(62, 225, 69, 0.15)' : 'rgba(225, 62, 62, 0.15)';
+                              
+                              return (
+                                <tr 
+                                  key={c.open_ts || i} 
+                                  style={{ 
+                                    borderBottom: '1px solid rgba(255,255,255,0.05)',
+                                    background: isImbalance ? imbalanceColor : 'transparent'
+                                  }}
+                                >
+                                  <td style={{ padding: 4 }}>
+                                    {new Date(c.open_ts).toLocaleTimeString()}
+                                    {isImbalance && <span style={{ marginLeft: 4 }}>🔥</span>}
+                                  </td>
+                                  <td style={{ textAlign: 'right', padding: 4, color: '#e13e3e' }}>{bid.toFixed(2)}</td>
+                                  <td style={{ textAlign: 'right', padding: 4, color: '#3ee145' }}>{ask.toFixed(2)}</td>
+                                  <td style={{ textAlign: 'right', padding: 4, color: deltaColor, fontWeight: 600 }}>
+                                    {delta >= 0 ? '+' : ''}{delta.toFixed(2)}
+                                  </td>
+                                  <td style={{ textAlign: 'right', padding: 4, color: cvdColor, fontSize: 11 }}>
+                                    {cvd >= 0 ? '+' : ''}{cvd.toFixed(2)}
+                                  </td>
+                                  <td style={{ textAlign: 'right', padding: 4 }} className="muted">{(c.levels || []).length}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'news' && (
+              <div>
+                {newsLoading && (
+                  <div className="card" style={{ padding: 32, textAlign: 'center' }}>
+                    <div className="muted">Loading news articles...</div>
+                  </div>
+                )}
+                {!newsLoading && (!news || news.length === 0) && (
+                  <div className="card" style={{ padding: 32, textAlign: 'center' }}>
+                    <div className="muted">No news articles found for {row.symbol}</div>
+                    <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+                      Showing general crypto market news instead
+                    </div>
+                  </div>
+                )}
+                {news && news.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    {news.map((article) => (
+                      <div key={article.id} className="card" style={{ padding: 16, transition: 'all 0.2s', cursor: 'pointer' }} 
+                           onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
+                           onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+                           onClick={() => window.open(article.url, '_blank')}>
+                        <div style={{ display: 'flex', gap: 12 }}>
+                          {article.image_url && (
+                            <div style={{ width: 80, height: 80, flexShrink: 0, borderRadius: 6, overflow: 'hidden', background: 'var(--border)' }}>
+                              <img 
+                                src={article.image_url} 
+                                alt="" 
+                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                onError={(e) => e.currentTarget.style.display = 'none'}
+                              />
+                            </div>
+                          )}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <h4 style={{ margin: '0 0 6px 0', fontSize: 15, fontWeight: 600, lineHeight: 1.4 }}>
+                              {article.title}
+                            </h4>
+                            <div className="muted" style={{ fontSize: 11, marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+                              <span style={{ fontWeight: 600 }}>{article.source}</span>
+                              <span>•</span>
+                              <span>{new Date(article.published * 1000).toLocaleDateString()} {new Date(article.published * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                            </div>
+                            <p style={{ fontSize: 13, margin: 0, color: 'var(--text-secondary)', lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                              {article.body}
+                            </p>
+                            {article.tags && article.tags.length > 0 && (
+                              <div style={{ marginTop: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                {article.tags.slice(0, 4).map((tag, i) => (
+                                  <span key={i} className="badge" style={{ fontSize: 10, padding: '2px 6px' }}>
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
         </div>
       </div>
     </div>

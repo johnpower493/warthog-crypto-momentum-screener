@@ -415,6 +415,29 @@ async def get_portfolio_stats():
         import traceback
         return {"error": str(e), "traceback": traceback.format_exc()}
 
+# ========================================
+# News Endpoints
+# ========================================
+
+@app.get("/news/{exchange}/{symbol}")
+async def get_news(exchange: str, symbol: str, limit: int = 20):
+    """Get latest news for a crypto symbol from CryptoCompare."""
+    try:
+        from .services.news import get_news_provider
+        provider = get_news_provider()
+        
+        articles = await provider.get_news(symbol, limit=limit)
+        
+        return {
+            "exchange": exchange,
+            "symbol": symbol,
+            "articles": articles,
+            "count": len(articles)
+        }
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
 @app.get("/debug/snapshot/all")
 async def debug_snapshot_all():
     try:
