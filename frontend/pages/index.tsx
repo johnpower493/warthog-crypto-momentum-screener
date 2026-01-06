@@ -35,6 +35,16 @@ type Metric = {
   wt2?: number | null;
   cipher_buy?: boolean | null;
   cipher_sell?: boolean | null;
+  percent_r_fast?: number | null;
+  percent_r_slow?: number | null;
+  percent_r_ob_trend_start?: boolean | null;
+  percent_r_os_trend_start?: boolean | null;
+  percent_r_ob_reversal?: boolean | null;
+  percent_r_os_reversal?: boolean | null;
+  percent_r_cross_bull?: boolean | null;
+  percent_r_cross_bear?: boolean | null;
+  percent_r_source_tf?: string | null;
+  percent_r_reason?: string | null;
 
   // Scalping impulse
   impulse_score?: number | null;
@@ -146,6 +156,8 @@ export default function Home() {
     | 'impulse'
     | 'cipherBuy'
     | 'cipherSell'
+    | 'rBuy'
+    | 'rSell'
   >('none');
   // (Removed) manual numeric threshold inputs. If you'd like these back later,
   // we can reintroduce them with validation.
@@ -412,11 +424,18 @@ export default function Home() {
               // Append any fresh cipher signals to alert log
               const newAlerts: {ts:number; text:string}[] = [];
               for (const m of s.metrics) {
+                // Cipher B signals
                 if (m && (m.cipher_buy === true || m.cipher_sell === true)) {
                   const side = m.cipher_buy ? 'BUY' : 'SELL';
                   const tf = m.cipher_source_tf ? `[${m.cipher_source_tf}]` : '';
                   const reason = m.cipher_reason ? `\n${m.cipher_reason}` : '';
                   newAlerts.push({ ts: Date.now(), text: `${side} ${tf} ${(m.exchange||'binance')} ${m.symbol} @ ${m.last_price}${reason}`});
+                }
+                // %R Trend Exhaustion signals
+                if (m && (m.percent_r_ob_reversal === true || m.percent_r_os_reversal === true)) {
+                  const side = m.percent_r_os_reversal ? 'BUY' : 'SELL';
+                  const reason = m.percent_r_reason ? `\n${m.percent_r_reason}` : '';
+                  newAlerts.push({ ts: Date.now(), text: `${side} [%RTE] ${(m.exchange||'binance')} ${m.symbol} @ ${m.last_price}${reason}`});
                 }
               }
               if (newAlerts.length>0) setAlertLog(prev => [...newAlerts, ...prev].slice(0, 200));
@@ -476,6 +495,8 @@ export default function Home() {
     if (preset === 'breakout15m') base = base.filter((r) => (r.breakout_15m ?? 0) > 0);
     if (preset === 'cipherBuy') base = base.filter((r) => r.cipher_buy);
     if (preset === 'cipherSell') base = base.filter((r) => r.cipher_sell);
+    if (preset === 'rBuy') base = base.filter((r) => r.percent_r_os_reversal);
+    if (preset === 'rSell') base = base.filter((r) => r.percent_r_ob_reversal);
 
     return base;
   }, [rows, query, onlyFavs, favs, preset]);
@@ -691,6 +712,20 @@ export default function Home() {
                 title="Cipher B: WT cross down while overbought"
               >
                 Cipher Sell
+              </button>
+              <button
+                className={"button " + (preset==='rBuy'?'buttonActive':'')}
+                onClick={()=>{ setPreset(preset==='rBuy'?'none':'rBuy'); }}
+                title="%R Trend Exhaustion: Bullish reversal (exited oversold)"
+              >
+                %R Buy
+              </button>
+              <button
+                className={"button " + (preset==='rSell'?'buttonActive':'')}
+                onClick={()=>{ setPreset(preset==='rSell'?'none':'rSell'); }}
+                title="%R Trend Exhaustion: Bearish reversal (exited overbought)"
+              >
+                %R Sell
               </button>
               <button className="button" onClick={()=>{setPreset('none');}}>Reset</button>
             </div>
@@ -995,7 +1030,15 @@ export default function Home() {
                   </td>
                   <td style={{fontWeight:600}}>{r.symbol}</td>
                   {col('exchange') && <td className="muted hide-xs">{r.exchange || 'binance'}</td>}
-                  {col('signal') && <td className={signalClass(r.signal_strength)}>{fmtSignal(r.signal_score, r.signal_strength)}</td>}
+                  {col('signal') && (
+                    <td className={signalClass(r.signal_strength)}>
+                      {fmtSignal(r.signal_score, r.signal_strength)}
+                      {r.cipher_buy && <span className="badge" style={{marginLeft:4,fontSize:10,background:'#2a9d8f'}}>CB↑</span>}
+                      {r.cipher_sell && <span className="badge" style={{marginLeft:4,fontSize:10,background:'#e76f51'}}>CB↓</span>}
+                      {r.percent_r_os_reversal && <span className="badge" style={{marginLeft:4,fontSize:10,background:'#06d6a0'}}>%R↑</span>}
+                      {r.percent_r_ob_reversal && <span className="badge" style={{marginLeft:4,fontSize:10,background:'#ef476f'}}>%R↓</span>}
+                    </td>
+                  )}
                   {col('impulse') && <td className={'hide-sm'}>{fmtImpulse(r.impulse_score, r.impulse_dir)}</td>}
                   {col('marketcap') && <td className={'hide-sm'}>{fmtMarketCap(r.market_cap)}</td>}
                   <td>{fmt(r.last_price)}</td>

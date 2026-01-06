@@ -84,12 +84,22 @@ async def process_metrics(metrics: List[SymbolMetrics]):
         if not _should_alert(sym_key, now_ms):
             continue
         # Alert only when a fresh signal is True
+        # Cipher B signals
         if m.cipher_buy is True or m.cipher_sell is True:
             _last_symbol_alert_ts[sym] = now_ms
             side = "BUY" if m.cipher_buy else "SELL"
             reason = f"\n{m.cipher_reason}" if ALERT_INCLUDE_EXPLANATION and m.cipher_reason else ""
             tf = f"[{m.cipher_source_tf}]" if m.cipher_source_tf else ""
             text = f"{side} {tf} {m.exchange} {m.symbol} @ {m.last_price}{reason}"
+            tasks.append(send_telegram(text))
+            tasks.append(send_discord(text))
+        
+        # %R Trend Exhaustion signals (reversals are most actionable)
+        if m.percent_r_ob_reversal is True or m.percent_r_os_reversal is True:
+            _last_symbol_alert_ts[sym] = now_ms
+            side = "BUY" if m.percent_r_os_reversal else "SELL"
+            reason = f"\n{m.percent_r_reason}" if ALERT_INCLUDE_EXPLANATION and m.percent_r_reason else ""
+            text = f"{side} [%RTE] {m.exchange} {m.symbol} @ {m.last_price}{reason}"
             tasks.append(send_telegram(text))
             tasks.append(send_discord(text))
     if tasks:

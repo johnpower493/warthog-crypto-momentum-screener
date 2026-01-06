@@ -20,7 +20,8 @@ class SymbolState:
     def __init__(self, symbol: str, exchange: str):
         self.symbol = symbol
         self.exchange = exchange
-        maxlen = max(61, WINDOW_MEDIUM+1, ATR_PERIOD+1, VOL_LOOKBACK+1)
+        # maxlen needs to accommodate %R slow period (112) + smoothing (3) + buffer = 120
+        maxlen = max(120, 61, WINDOW_MEDIUM+1, ATR_PERIOD+1, VOL_LOOKBACK+1)
         self.close_1m = RollingSeries(maxlen=maxlen)
         self.high_1m = RollingSeries(maxlen=maxlen)
         self.low_1m = RollingSeries(maxlen=maxlen)
@@ -203,6 +204,74 @@ class SymbolState:
             elif tf == '4h' and wt4h and len(wt4h) == 4:
                 cipher_reason = f"CipherB SELL: {tf} cross-down at WT1={wt4h[0]:.2f}, WT2={wt4h[1]:.2f} (ob>={CIPHERB_OB_LEVEL})"
         
+        # %R Trend Exhaustion (HTF: 15m and 4h like Cipher B)
+        # Calculate on both 15m and 4h closed candles for more reliable signals
+        r15m = percent_r_trend_exhaustion(
+            self._htf['15m']['high'].values,
+            self._htf['15m']['low'].values,
+            self._htf['15m']['close'].values,
+            short_length=21,
+            short_smoothing=7,
+            long_length=112,
+            long_smoothing=3,
+            threshold=20,
+            smoothing_type='ema',
+        )
+        r4h = percent_r_trend_exhaustion(
+            self._htf['4h']['high'].values,
+            self._htf['4h']['low'].values,
+            self._htf['4h']['close'].values,
+            short_length=21,
+            short_smoothing=7,
+            long_length=112,
+            long_smoothing=3,
+            threshold=20,
+            smoothing_type='ema',
+        )
+        
+        def _r_signals_from_tuple(r_tuple):
+            """Extract reversal signals from %R tuple"""
+            if not r_tuple or r_tuple[0] is None:
+                return (None, None)
+            # r_tuple = (fast_r, slow_r, fast_r_prev, slow_r_prev, 
+            #            ob_trend_start, os_trend_start, ob_reversal, os_reversal, cross_bull, cross_bear)
+            return (r_tuple[7], r_tuple[6])  # (os_reversal=BUY, ob_reversal=SELL)
+        
+        buy15m, sell15m = _r_signals_from_tuple(r15m)
+        buy4h, sell4h = _r_signals_from_tuple(r4h)
+        
+        # EITHER policy: trigger if 15m OR 4h has a fresh reversal signal
+        percent_r_os_reversal = True if ((buy15m is True) or (buy4h is True)) else (False if ((buy15m is False) and (buy4h is False)) else None)
+        percent_r_ob_reversal = True if ((sell15m is True) or (sell4h is True)) else (False if ((sell15m is False) and (sell4h is False)) else None)
+        
+        # Extract values for display (use whichever timeframe triggered, prefer 15m)
+        percent_r_fast = r15m[0] if r15m[0] is not None else r4h[0]
+        percent_r_slow = r15m[1] if r15m[1] is not None else r4h[1]
+        
+        # For other signals, use 15m if available, otherwise 4h
+        percent_r_ob_trend_start = r15m[4] if r15m[4] is not None else r4h[4]
+        percent_r_os_trend_start = r15m[5] if r15m[5] is not None else r4h[5]
+        percent_r_cross_bull = r15m[8] if r15m[8] is not None else r4h[8]
+        percent_r_cross_bear = r15m[9] if r15m[9] is not None else r4h[9]
+        
+        # Build %R reason string with timeframe attribution
+        percent_r_source_tf = None
+        percent_r_reason = None
+        if percent_r_os_reversal is True:
+            tf = '15m' if buy15m else ('4h' if buy4h else None)
+            percent_r_source_tf = tf
+            fast = r15m[0] if tf == '15m' else r4h[0]
+            slow = r15m[1] if tf == '15m' else r4h[1]
+            if fast is not None and slow is not None:
+                percent_r_reason = f"%RTE BUY: {tf} Bullish reversal ▲ (exited OS zone, fast=%R={fast:.1f}, slow=%R={slow:.1f})"
+        elif percent_r_ob_reversal is True:
+            tf = '15m' if sell15m else ('4h' if sell4h else None)
+            percent_r_source_tf = tf
+            fast = r15m[0] if tf == '15m' else r4h[0]
+            slow = r15m[1] if tf == '15m' else r4h[1]
+            if fast is not None and slow is not None:
+                percent_r_reason = f"%RTE SELL: {tf} Bearish reversal ▼ (exited OB zone, fast=%R={fast:.1f}, slow=%R={slow:.1f})"
+        
         # Impulse score (useful for scalping screens)
         # Goal: surface symbols with unusually large *current* movement + activity.
         impulse_sc, impulse_dir = calculate_impulse_score(
@@ -229,6 +298,16 @@ class SymbolState:
             wt2=wt2_1m,
             cipher_buy=cipher_buy,
             cipher_sell=cipher_sell,
+            percent_r_fast=percent_r_fast,
+            percent_r_slow=percent_r_slow,
+            percent_r_ob_trend_start=percent_r_ob_trend_start,
+            percent_r_os_trend_start=percent_r_os_trend_start,
+            percent_r_ob_reversal=percent_r_ob_reversal,
+            percent_r_os_reversal=percent_r_os_reversal,
+            percent_r_cross_bull=percent_r_cross_bull,
+            percent_r_cross_bear=percent_r_cross_bear,
+            percent_r_source_tf=percent_r_source_tf,
+            percent_r_reason=percent_r_reason,
             impulse_score=impulse_sc,
             impulse_dir=impulse_dir,
             change_1m=ch_1,
@@ -373,6 +452,155 @@ def cipher_b_signals(
     cross_down = prev_diff > 0 and curr_diff <= 0
 
     return (oversold and cross_up), (overbought and cross_down)
+
+
+def williams_r(
+    highs: list[float],
+    lows: list[float],
+    closes: list[float],
+    length: int,
+) -> Optional[float]:
+    """Calculate Williams %R indicator.
+    
+    Formula: %R = 100 * (highest_high - close) / (highest_high - lowest_low)
+    Range: 0 to -100 (inverted scale)
+    
+    Pine Script equivalent:
+        max = ta.highest(length)
+        min = ta.lowest(length)
+        100 * (src - max) / (max - min)
+    """
+    if len(closes) < length or len(highs) < length or len(lows) < length:
+        return None
+    
+    try:
+        # Get the lookback window
+        h_window = highs[-length:]
+        l_window = lows[-length:]
+        current_close = closes[-1]
+        
+        highest_high = max(h_window)
+        lowest_low = min(l_window)
+        
+        if highest_high == lowest_low:
+            return None
+        
+        # Williams %R formula (returns -100 to 0)
+        r = 100 * (current_close - highest_high) / (highest_high - lowest_low)
+        return r
+    except Exception:
+        return None
+
+
+def percent_r_trend_exhaustion(
+    highs: Deque[float],
+    lows: Deque[float],
+    closes: Deque[float],
+    short_length: int = 21,
+    short_smoothing: int = 7,
+    long_length: int = 112,
+    long_smoothing: int = 3,
+    threshold: int = 20,
+    smoothing_type: str = 'ema',
+) -> tuple[
+    Optional[float], Optional[float],  # fast_r, slow_r
+    Optional[float], Optional[float],  # fast_r_prev, slow_r_prev
+    Optional[bool], Optional[bool],    # ob_trend_start, os_trend_start
+    Optional[bool], Optional[bool],    # ob_reversal, os_reversal
+    Optional[bool], Optional[bool],    # cross_bull, cross_bear
+]:
+    """Calculate %R Trend Exhaustion signals.
+    
+    Based on upslidedown's %R Trend Exhaustion indicator.
+    Uses dual Williams %R (fast and slow periods) with smoothing.
+    
+    Returns:
+        (fast_r, slow_r, fast_r_prev, slow_r_prev, 
+         ob_trend_start, os_trend_start, ob_reversal, os_reversal,
+         cross_bull, cross_bear)
+    
+    Signals:
+        - ob_trend_start: Entered overbought zone (both %R >= -threshold)
+        - os_trend_start: Entered oversold zone (both %R <= -100+threshold)
+        - ob_reversal: Exited overbought zone (bearish reversal ▼)
+        - os_reversal: Exited oversold zone (bullish reversal ▲)
+        - cross_bull: Fast crosses under slow (bullish)
+        - cross_bear: Fast crosses over slow (bearish)
+    """
+    if len(closes) < max(long_length + long_smoothing + 2, short_length + short_smoothing + 2):
+        return None, None, None, None, None, None, None, None, None, None
+    
+    try:
+        h = list(highs)
+        l = list(lows)
+        c = list(closes)
+        n = min(len(h), len(l), len(c))
+        
+        # Calculate raw %R series
+        fast_r_series = []
+        slow_r_series = []
+        
+        for i in range(n):
+            if i >= short_length - 1:
+                fr = williams_r(h[:i+1], l[:i+1], c[:i+1], short_length)
+                if fr is not None:
+                    fast_r_series.append(fr)
+            
+            if i >= long_length - 1:
+                sr = williams_r(h[:i+1], l[:i+1], c[:i+1], long_length)
+                if sr is not None:
+                    slow_r_series.append(sr)
+        
+        # Apply smoothing if needed
+        if short_smoothing > 1 and len(fast_r_series) >= short_smoothing:
+            fast_r_series = _ema_series(fast_r_series, short_smoothing) if smoothing_type == 'ema' else fast_r_series
+        
+        if long_smoothing > 1 and len(slow_r_series) >= long_smoothing:
+            slow_r_series = _ema_series(slow_r_series, long_smoothing) if smoothing_type == 'ema' else slow_r_series
+        
+        # Need at least 2 values for signal detection
+        if len(fast_r_series) < 2 or len(slow_r_series) < 2:
+            return None, None, None, None, None, None, None, None, None, None
+        
+        fast_r = fast_r_series[-1]
+        slow_r = slow_r_series[-1]
+        fast_r_prev = fast_r_series[-2]
+        slow_r_prev = slow_r_series[-2]
+        
+        # Overbought/Oversold logic
+        overbought = fast_r >= -threshold and slow_r >= -threshold
+        oversold = fast_r <= (-100 + threshold) and slow_r <= (-100 + threshold)
+        
+        overbought_prev = fast_r_prev >= -threshold and slow_r_prev >= -threshold
+        oversold_prev = fast_r_prev <= (-100 + threshold) and slow_r_prev <= (-100 + threshold)
+        
+        # Trend start: entering the zone
+        ob_trend_start = overbought and not overbought_prev
+        os_trend_start = oversold and not oversold_prev
+        
+        # Reversal: exiting the zone
+        ob_reversal = not overbought and overbought_prev
+        os_reversal = not oversold and oversold_prev
+        
+        # Crossovers
+        # cross_bull: slow crosses under fast (fast becomes stronger/more bullish)
+        # cross_bear: slow crosses over fast (fast becomes weaker/more bearish)
+        prev_diff = slow_r_prev - fast_r_prev
+        curr_diff = slow_r - fast_r
+        
+        cross_bull = prev_diff > 0 and curr_diff <= 0  # slow was above, now below (bullish)
+        cross_bear = prev_diff < 0 and curr_diff >= 0  # slow was below, now above (bearish)
+        
+        return (
+            fast_r, slow_r,
+            fast_r_prev, slow_r_prev,
+            ob_trend_start, os_trend_start,
+            ob_reversal, os_reversal,
+            cross_bull, cross_bear
+        )
+    
+    except Exception:
+        return None, None, None, None, None, None, None, None, None, None
 
 
 def pct_change(values, window: int) -> Optional[float]:

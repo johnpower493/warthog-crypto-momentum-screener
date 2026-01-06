@@ -29,6 +29,18 @@ class SymbolMetrics(BaseModel):
     cipher_source_tf: Optional[str] = None  # '15m' | '4h' indicating which timeframe triggered
     cipher_reason: Optional[str] = None  # human-readable explanation for the signal
 
+    # %R Trend Exhaustion fields
+    percent_r_fast: Optional[float] = None  # Fast period %R (21)
+    percent_r_slow: Optional[float] = None  # Slow period %R (112)
+    percent_r_ob_trend_start: Optional[bool] = None  # Entered overbought zone ⏹
+    percent_r_os_trend_start: Optional[bool] = None  # Entered oversold zone ⏹
+    percent_r_ob_reversal: Optional[bool] = None  # Exited overbought (bearish reversal ▼)
+    percent_r_os_reversal: Optional[bool] = None  # Exited oversold (bullish reversal ▲)
+    percent_r_cross_bull: Optional[bool] = None  # Bullish crossover ⏺
+    percent_r_cross_bear: Optional[bool] = None  # Bearish crossover ⏺
+    percent_r_source_tf: Optional[str] = None  # '15m' | '4h' indicating which timeframe triggered
+    percent_r_reason: Optional[str] = None  # Human-readable explanation for %R signal
+
     # Liquidity cohorting
     liquidity_rank: Optional[int] = None
     liquidity_top200: Optional[bool] = None
