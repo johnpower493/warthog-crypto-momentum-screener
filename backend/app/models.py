@@ -82,6 +82,15 @@ class SymbolMetrics(BaseModel):
     # Combined signal
     signal_score: Optional[float] = None  # combined signal strength (-100 to +100)
     signal_strength: Optional[str] = None  # "strong_bull", "bull", "neutral", "bear", "strong_bear"
+    
+    # Technical Indicators
+    rsi_14: Optional[float] = None  # RSI (14 period) - 0 to 100
+    macd: Optional[float] = None  # MACD line
+    macd_signal: Optional[float] = None  # MACD signal line
+    macd_histogram: Optional[float] = None  # MACD histogram
+    stoch_k: Optional[float] = None  # Stochastic RSI %K (0 to 100)
+    stoch_d: Optional[float] = None  # Stochastic RSI %D (0 to 100)
+    
     ts: int = Field(default_factory=lambda: int(datetime.utcnow().timestamp()*1000))
 
 class ScreenerSnapshot(BaseModel):

@@ -52,6 +52,15 @@ type Metric = {
   // Combined signal
   signal_score?: number | null;
   signal_strength?: string | null;
+  
+  // Technical Indicators
+  rsi_14?: number | null;
+  macd?: number | null;
+  macd_signal?: number | null;
+  macd_histogram?: number | null;
+  stoch_k?: number | null;
+  stoch_d?: number | null;
+  
   ts: number;
 };
 
@@ -1345,7 +1354,7 @@ function DetailsModal({
   onQuickAddToPortfolio?: () => void;
   backendWs: string;
 }) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'plan' | 'news'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'plan' | 'indicators' | 'news'>('overview');
   const exchange = row.exchange || 'binance';
   const symbol = row.symbol;
 
@@ -1513,6 +1522,22 @@ function DetailsModal({
             Trade Plan
           </button>
           <button 
+            className={`button ${activeTab === 'indicators' ? '' : ''}`}
+            onClick={() => setActiveTab('indicators')}
+            style={{ 
+              border: 'none',
+              borderBottom: activeTab === 'indicators' ? '2px solid var(--accent, #4a9eff)' : '2px solid transparent',
+              borderRadius: 0,
+              padding: '12px 20px',
+              marginBottom: '-2px',
+              fontWeight: activeTab === 'indicators' ? 600 : 400,
+              background: 'transparent',
+              opacity: activeTab === 'indicators' ? 1 : 0.6
+            }}
+          >
+            📊 Indicators
+          </button>
+          <button 
             className={`button ${activeTab === 'news' ? '' : ''}`}
             onClick={() => setActiveTab('news')}
             style={{ 
@@ -1591,6 +1616,83 @@ function DetailsModal({
                     </div>
                   </div>
                 </div>
+
+                {/* Signals & Indicators Section */}
+                {(row.cipher_buy || row.cipher_sell || row.percent_r_ob_reversal || row.percent_r_os_reversal || 
+                  row.wt1 !== null || row.percent_r_fast !== null) && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div className="muted" style={{ fontSize: 12, marginBottom: 8, fontWeight: 600 }}>📊 Active Signals & Indicators</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+                      
+                      {/* Cipher B Card */}
+                      {(row.wt1 !== null || row.cipher_buy || row.cipher_sell) && (
+                        <div className="card" style={{ padding: 12, background: row.cipher_buy ? 'rgba(42, 157, 143, 0.1)' : row.cipher_sell ? 'rgba(231, 111, 81, 0.1)' : 'rgba(0,0,0,0.2)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                            <span style={{ fontWeight: 600, fontSize: 14 }}>Cipher B (WaveTrend)</span>
+                            {row.cipher_source_tf && (
+                              <span className="badge" style={{ fontSize: 10, padding: '2px 6px' }}>{row.cipher_source_tf}</span>
+                            )}
+                            {row.cipher_buy && <span style={{ fontSize: 18 }}>🟢</span>}
+                            {row.cipher_sell && <span style={{ fontSize: 18 }}>🔴</span>}
+                          </div>
+                          <div style={{ display: 'flex', gap: 16, marginBottom: 6, fontSize: 13 }}>
+                            {row.wt1 !== null && row.wt1 !== undefined && (
+                              <div>
+                                <span className="muted">WT1: </span>
+                                <span style={{ fontWeight: 600, color: 'var(--text)' }}>{row.wt1.toFixed(1)}</span>
+                              </div>
+                            )}
+                            {row.wt2 !== null && row.wt2 !== undefined && (
+                              <div>
+                                <span className="muted">WT2: </span>
+                                <span style={{ fontWeight: 600, color: 'var(--text)' }}>{row.wt2.toFixed(1)}</span>
+                              </div>
+                            )}
+                          </div>
+                          {row.cipher_reason && (
+                            <div style={{ fontSize: 11, color: '#888', fontStyle: 'italic', lineHeight: 1.4 }}>
+                              {row.cipher_reason}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* %R Trend Exhaustion Card */}
+                      {(row.percent_r_fast !== null || row.percent_r_ob_reversal || row.percent_r_os_reversal) && (
+                        <div className="card" style={{ padding: 12, background: row.percent_r_os_reversal ? 'rgba(6, 214, 160, 0.1)' : row.percent_r_ob_reversal ? 'rgba(239, 71, 111, 0.1)' : 'rgba(0,0,0,0.2)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                            <span style={{ fontWeight: 600, fontSize: 14 }}>%R Trend Exhaustion</span>
+                            {row.percent_r_source_tf && (
+                              <span className="badge" style={{ fontSize: 10, padding: '2px 6px' }}>{row.percent_r_source_tf}</span>
+                            )}
+                            {row.percent_r_os_reversal && <span style={{ fontSize: 18 }}>🟢</span>}
+                            {row.percent_r_ob_reversal && <span style={{ fontSize: 18 }}>🔴</span>}
+                          </div>
+                          <div style={{ display: 'flex', gap: 16, marginBottom: 6, fontSize: 13 }}>
+                            {row.percent_r_fast !== null && row.percent_r_fast !== undefined && (
+                              <div>
+                                <span className="muted">Fast: </span>
+                                <span style={{ fontWeight: 600, color: 'var(--text)' }}>{row.percent_r_fast.toFixed(1)}</span>
+                              </div>
+                            )}
+                            {row.percent_r_slow !== null && row.percent_r_slow !== undefined && (
+                              <div>
+                                <span className="muted">Slow: </span>
+                                <span style={{ fontWeight: 600, color: 'var(--text)' }}>{row.percent_r_slow.toFixed(1)}</span>
+                              </div>
+                            )}
+                          </div>
+                          {row.percent_r_reason && (
+                            <div style={{ fontSize: 11, color: '#888', fontStyle: 'italic', lineHeight: 1.4 }}>
+                              {row.percent_r_reason}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                    </div>
+                  </div>
+                )}
 
                 {/* Price Charts */}
                 <div className="chartsGrid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -1797,6 +1899,113 @@ function DetailsModal({
                       </div>
                     </>
                   )}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'indicators' && (
+              <div style={{ padding: 16 }}>
+                <div className="muted" style={{ fontSize: 12, marginBottom: 12, fontWeight: 600 }}>
+                  📊 Technical Indicators (15m Timeframe)
+                </div>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+                  
+                  {/* RSI Card */}
+                  <div className="card" style={{ padding: 12 }}>
+                    <div style={{ marginBottom: 8 }}>
+                      <span style={{ fontWeight: 600, fontSize: 14 }}>RSI (14)</span>
+                      <span className="muted" style={{ fontSize: 11, marginLeft: 8 }}>Relative Strength Index</span>
+                    </div>
+                    {row.rsi_14 !== null && row.rsi_14 !== undefined ? (
+                      <>
+                        <div style={{ fontSize: 32, fontWeight: 700, marginBottom: 8, color: row.rsi_14 >= 70 ? '#e76f51' : row.rsi_14 <= 30 ? '#2a9d8f' : 'var(--text)' }}>
+                          {row.rsi_14.toFixed(1)}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#888' }}>
+                          {row.rsi_14 >= 70 ? '🔴 Overbought (>70)' : row.rsi_14 <= 30 ? '🟢 Oversold (<30)' : '⚪ Neutral (30-70)'}
+                        </div>
+                        <div style={{ marginTop: 8, height: 4, background: 'rgba(255,255,255,0.1)', borderRadius: 2, overflow: 'hidden' }}>
+                          <div style={{ width: `${row.rsi_14}%`, height: '100%', background: row.rsi_14 >= 70 ? '#e76f51' : row.rsi_14 <= 30 ? '#2a9d8f' : '#4a9eff', transition: 'width 0.3s' }} />
+                        </div>
+                      </>
+                    ) : (
+                      <div className="muted" style={{ fontSize: 12 }}>Not enough data (need 15+ candles)</div>
+                    )}
+                  </div>
+
+                  {/* MACD Card */}
+                  <div className="card" style={{ padding: 12 }}>
+                    <div style={{ marginBottom: 8 }}>
+                      <span style={{ fontWeight: 600, fontSize: 14 }}>MACD (12,26,9)</span>
+                      <span className="muted" style={{ fontSize: 11, marginLeft: 8 }}>Moving Avg Convergence</span>
+                    </div>
+                    {row.macd !== null && row.macd !== undefined ? (
+                      <>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13 }}>
+                          <div>
+                            <span className="muted">MACD: </span>
+                            <span style={{ fontWeight: 600, color: (row.macd || 0) >= 0 ? '#3ee145' : '#e13e3e' }}>
+                              {row.macd.toFixed(2)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="muted">Signal: </span>
+                            <span style={{ fontWeight: 600 }}>
+                              {row.macd_signal?.toFixed(2) || 'N/A'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="muted">Histogram: </span>
+                            <span style={{ fontWeight: 600, color: (row.macd_histogram || 0) >= 0 ? '#3ee145' : '#e13e3e' }}>
+                              {row.macd_histogram?.toFixed(2) || 'N/A'}
+                            </span>
+                          </div>
+                        </div>
+                        <div style={{ fontSize: 11, color: '#888', marginTop: 8 }}>
+                          {(row.macd_histogram || 0) > 0 ? '🟢 Bullish momentum' : '🔴 Bearish momentum'}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="muted" style={{ fontSize: 12 }}>Not enough data (need 35+ candles)</div>
+                    )}
+                  </div>
+
+                  {/* Stochastic RSI Card */}
+                  <div className="card" style={{ padding: 12 }}>
+                    <div style={{ marginBottom: 8 }}>
+                      <span style={{ fontWeight: 600, fontSize: 14 }}>Stochastic RSI</span>
+                      <span className="muted" style={{ fontSize: 11, marginLeft: 8 }}>%K / %D</span>
+                    </div>
+                    {row.stoch_k !== null && row.stoch_k !== undefined ? (
+                      <>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13, marginBottom: 8 }}>
+                          <div>
+                            <span className="muted">%K: </span>
+                            <span style={{ fontWeight: 600, color: row.stoch_k >= 80 ? '#e76f51' : row.stoch_k <= 20 ? '#2a9d8f' : 'var(--text)' }}>
+                              {row.stoch_k.toFixed(1)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="muted">%D: </span>
+                            <span style={{ fontWeight: 600, color: (row.stoch_d || 0) >= 80 ? '#e76f51' : (row.stoch_d || 0) <= 20 ? '#2a9d8f' : 'var(--text)' }}>
+                              {row.stoch_d?.toFixed(1) || 'N/A'}
+                            </span>
+                          </div>
+                        </div>
+                        <div style={{ fontSize: 11, color: '#888' }}>
+                          {row.stoch_k >= 80 ? '🔴 Overbought (>80)' : row.stoch_k <= 20 ? '🟢 Oversold (<20)' : '⚪ Neutral (20-80)'}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="muted" style={{ fontSize: 12 }}>Not enough data (need 35+ candles)</div>
+                    )}
+                  </div>
+
+                </div>
+
+                <div className="muted" style={{ fontSize: 11, marginTop: 16, padding: 12, background: 'rgba(0,0,0,0.2)', borderRadius: 4 }}>
+                  ℹ️ All indicators are calculated on 15m closed candles for more stable signals. Indicators may show "Not enough data" until sufficient 15m candles have been collected (~6 hours for full indicator set).
                 </div>
               </div>
             )}

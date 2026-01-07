@@ -290,6 +290,12 @@ class SymbolState:
             vol_zscore=vol_z
         )
         
+        # Technical Indicators (calculated on 15m HTF for more stable signals)
+        closes_15m = list(self._htf['15m']['close'].values)
+        rsi_14_val = rsi(closes_15m, period=14) if len(closes_15m) >= 15 else None
+        macd_val, macd_sig_val, macd_hist_val = macd(closes_15m, fast=12, slow=26, signal=9) if len(closes_15m) >= 35 else (None, None, None)
+        stoch_k_val, stoch_d_val = stochastic_rsi(closes_15m, rsi_period=14, stoch_period=14, k_smooth=3, d_smooth=3) if len(closes_15m) >= 35 else (None, None)
+        
         return SymbolMetrics(
             symbol=self.symbol,
             exchange=self.exchange,
@@ -334,6 +340,12 @@ class SymbolState:
             signal_strength=signal_str,
             cipher_source_tf=cipher_source_tf,
             cipher_reason=cipher_reason,
+            rsi_14=rsi_14_val,
+            macd=macd_val,
+            macd_signal=macd_sig_val,
+            macd_histogram=macd_hist_val,
+            stoch_k=stoch_k_val,
+            stoch_d=stoch_d_val,
         )
 
 def _ema_series(values: list[float], length: int) -> list[float]:
@@ -892,6 +904,145 @@ def calculate_impulse_score(
 
         score = max(0.0, min(100.0, raw * 100.0))
         return score, dir_
+    except Exception:
+        return None, None
+
+
+def rsi(closes: list[float], period: int = 14) -> Optional[float]:
+    """Calculate RSI (Relative Strength Index).
+    
+    Range: 0 to 100
+    - Above 70: Overbought
+    - Below 30: Oversold
+    """
+    if len(closes) < period + 1:
+        return None
+    
+    try:
+        # Calculate price changes
+        gains = []
+        losses = []
+        
+        for i in range(1, len(closes)):
+            change = closes[i] - closes[i-1]
+            if change > 0:
+                gains.append(change)
+                losses.append(0)
+            else:
+                gains.append(0)
+                losses.append(abs(change))
+        
+        if len(gains) < period:
+            return None
+        
+        # Calculate average gain and loss using Wilder's smoothing
+        avg_gain = sum(gains[-period:]) / period
+        avg_loss = sum(losses[-period:]) / period
+        
+        if avg_loss == 0:
+            return 100.0
+        
+        rs = avg_gain / avg_loss
+        rsi_value = 100 - (100 / (1 + rs))
+        
+        return rsi_value
+    except Exception:
+        return None
+
+
+def macd(closes: list[float], fast: int = 12, slow: int = 26, signal: int = 9) -> tuple[Optional[float], Optional[float], Optional[float]]:
+    """Calculate MACD (Moving Average Convergence Divergence).
+    
+    Returns: (macd_line, signal_line, histogram)
+    - macd_line: Fast EMA - Slow EMA
+    - signal_line: EMA of MACD line
+    - histogram: MACD - Signal (momentum indicator)
+    """
+    if len(closes) < slow + signal:
+        return None, None, None
+    
+    try:
+        # Calculate EMAs
+        fast_ema = _ema_series(closes, fast)
+        slow_ema = _ema_series(closes, slow)
+        
+        if len(fast_ema) < slow or len(slow_ema) < slow:
+            return None, None, None
+        
+        # MACD line = Fast EMA - Slow EMA
+        macd_line_series = [fast_ema[i] - slow_ema[i] for i in range(len(slow_ema))]
+        
+        if len(macd_line_series) < signal:
+            return None, None, None
+        
+        # Signal line = EMA of MACD line
+        signal_line_series = _ema_series(macd_line_series, signal)
+        
+        if not signal_line_series:
+            return None, None, None
+        
+        macd_value = macd_line_series[-1]
+        signal_value = signal_line_series[-1]
+        histogram = macd_value - signal_value
+        
+        return macd_value, signal_value, histogram
+    except Exception:
+        return None, None, None
+
+
+def stochastic_rsi(closes: list[float], rsi_period: int = 14, stoch_period: int = 14, k_smooth: int = 3, d_smooth: int = 3) -> tuple[Optional[float], Optional[float]]:
+    """Calculate Stochastic RSI.
+    
+    Applies Stochastic oscillator to RSI values.
+    
+    Returns: (k_value, d_value)
+    - k_value: Fast stochastic (%K)
+    - d_value: Slow stochastic (%D) - SMA of %K
+    
+    Range: 0 to 100
+    - Above 80: Overbought
+    - Below 20: Oversold
+    """
+    if len(closes) < rsi_period + stoch_period + k_smooth + d_smooth:
+        return None, None
+    
+    try:
+        # Calculate RSI series
+        rsi_series = []
+        for i in range(rsi_period, len(closes)):
+            rsi_val = rsi(closes[:i+1], rsi_period)
+            if rsi_val is not None:
+                rsi_series.append(rsi_val)
+        
+        if len(rsi_series) < stoch_period:
+            return None, None
+        
+        # Apply Stochastic to RSI
+        stoch_k_series = []
+        for i in range(stoch_period - 1, len(rsi_series)):
+            window = rsi_series[i - stoch_period + 1:i + 1]
+            max_rsi = max(window)
+            min_rsi = min(window)
+            
+            if max_rsi == min_rsi:
+                stoch_k_series.append(0)
+            else:
+                k = 100 * (rsi_series[i] - min_rsi) / (max_rsi - min_rsi)
+                stoch_k_series.append(k)
+        
+        if len(stoch_k_series) < k_smooth:
+            return None, None
+        
+        # Smooth %K
+        k_smoothed = _sma_last(stoch_k_series, k_smooth)
+        
+        # Calculate %D (SMA of %K)
+        if len(stoch_k_series) < d_smooth:
+            return None, None
+        
+        d_value = _sma_last(stoch_k_series, d_smooth)
+        
+        return k_smoothed, d_value
     except Exception:
         return None, None
 
