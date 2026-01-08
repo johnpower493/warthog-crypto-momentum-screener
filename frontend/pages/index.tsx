@@ -1042,10 +1042,10 @@ export default function Home() {
                   {col('signal') && (
                     <td className={signalClass(r.signal_strength)}>
                       {fmtSignal(r.signal_score, r.signal_strength)}
-                      {r.cipher_buy && <span className="badge" style={{marginLeft:4,fontSize:10,background:'#2a9d8f'}}>CB↑</span>}
-                      {r.cipher_sell && <span className="badge" style={{marginLeft:4,fontSize:10,background:'#e76f51'}}>CB↓</span>}
-                      {r.percent_r_os_reversal && <span className="badge" style={{marginLeft:4,fontSize:10,background:'#06d6a0'}}>%R↑</span>}
-                      {r.percent_r_ob_reversal && <span className="badge" style={{marginLeft:4,fontSize:10,background:'#ef476f'}}>%R↓</span>}
+                      {r.cipher_buy && <span className="badge" style={{marginLeft:6,fontSize:12,background:'#2a9d8f',padding:'3px 6px',fontWeight:700,color:'#fff',boxShadow:'0 0 8px rgba(42,157,143,0.6)'}}>CB↑</span>}
+                      {r.cipher_sell && <span className="badge" style={{marginLeft:6,fontSize:12,background:'#e76f51',padding:'3px 6px',fontWeight:700,color:'#fff',boxShadow:'0 0 8px rgba(231,111,81,0.6)'}}>CB↓</span>}
+                      {r.percent_r_os_reversal && <span className="badge" style={{marginLeft:6,fontSize:12,background:'#06d6a0',padding:'3px 6px',fontWeight:700,color:'#000',boxShadow:'0 0 8px rgba(6,214,160,0.6)'}}>%R↑</span>}
+                      {r.percent_r_ob_reversal && <span className="badge" style={{marginLeft:6,fontSize:12,background:'#ef476f',padding:'3px 6px',fontWeight:700,color:'#fff',boxShadow:'0 0 8px rgba(239,71,111,0.6)'}}>%R↓</span>}
                     </td>
                   )}
                   {col('impulse') && <td className={'hide-sm'}>{fmtImpulse(r.impulse_score, r.impulse_dir)}</td>}
