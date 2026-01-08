@@ -323,6 +323,7 @@ export default function PortfolioPage() {
                       <th>PnL</th>
                       <th>PnL %</th>
                       <th>SL/TP</th>
+                      <th>Notes</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
@@ -344,6 +345,9 @@ export default function PortfolioPage() {
                           {p.stop_loss ? `SL: ${fmt(p.stop_loss)}` : '-'}
                           <br />
                           {p.take_profit ? `TP: ${fmt(p.take_profit)}` : '-'}
+                        </td>
+                        <td className="muted" style={{ fontSize: 12, maxWidth: 200, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                          {p.notes || '-'}
                         </td>
                         <td>
                           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
@@ -673,21 +677,23 @@ export default function PortfolioPage() {
           left: 0;
           right: 0;
           bottom: 0;
-          background: rgba(0, 0, 0, 0.7);
+          background: rgba(0, 0, 0, 0.85);
+          backdrop-filter: blur(4px);
           display: flex;
           align-items: center;
           justify-content: center;
           z-index: 1000;
         }
         .modal {
-          background: var(--bg-secondary);
-          border: 1px solid var(--border);
-          border-radius: 8px;
+          background: rgb(12, 19, 30);
+          border: 1px solid rgba(255, 255, 255, 0.15);
+          border-radius: 12px;
           padding: 24px;
           max-width: 500px;
           width: 90%;
           max-height: 90vh;
           overflow-y: auto;
+          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
         }
         label {
           display: flex;

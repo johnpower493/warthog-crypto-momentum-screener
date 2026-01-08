@@ -345,12 +345,7 @@ async def add_position(body: dict):
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 @app.put("/portfolio/positions/{position_id}")
-async def update_position(
-    position_id: int,
-    stop_loss: float = None,
-    take_profit: float = None,
-    notes: str = None,
-):
+async def update_position(position_id: int, body: dict):
     """Update an existing position."""
     try:
         from .services.portfolio import get_portfolio_manager
@@ -358,9 +353,9 @@ async def update_position(
         
         success = manager.update_position(
             position_id=position_id,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
-            notes=notes,
+            stop_loss=body.get('stop_loss'),
+            take_profit=body.get('take_profit'),
+            notes=body.get('notes'),
         )
         
         return {"success": success}
