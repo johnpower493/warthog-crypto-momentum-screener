@@ -283,9 +283,26 @@ async def get_positions():
         manager = get_portfolio_manager()
         positions = manager.get_open_positions()
         
-        # Get current prices from the screener
-        snap = stream_mgr.agg.build_snapshot()  # type: ignore[attr-defined]
-        price_map = {f"{m.exchange}:{m.symbol}": m.last_price for m in snap.metrics}
+        # Get current prices from BOTH Binance and Bybit screeners
+        price_map = {}
+        
+        # Add Binance prices
+        try:
+            snap_binance = stream_mgr.agg.build_snapshot()  # type: ignore[attr-defined]
+            for m in snap_binance.metrics:
+                price_map[f"{m.exchange}:{m.symbol}"] = m.last_price
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to get Binance prices for portfolio: {e}")
+        
+        # Add Bybit prices
+        try:
+            snap_bybit = stream_mgr.agg_bybit.build_snapshot()  # type: ignore[attr-defined]
+            for m in snap_bybit.metrics:
+                price_map[f"{m.exchange}:{m.symbol}"] = m.last_price
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to get Bybit prices for portfolio: {e}")
         
         result = []
         for pos in positions:
