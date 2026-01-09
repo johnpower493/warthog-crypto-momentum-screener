@@ -364,11 +364,7 @@ async def update_position(position_id: int, body: dict):
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 @app.post("/portfolio/positions/{position_id}/close")
-async def close_position(
-    position_id: int,
-    exit_price: float,
-    notes: str = None,
-):
+async def close_position(position_id: int, body: dict):
     """Close a position."""
     try:
         from .services.portfolio import get_portfolio_manager
@@ -376,8 +372,8 @@ async def close_position(
         
         success = manager.close_position(
             position_id=position_id,
-            exit_price=exit_price,
-            notes=notes,
+            exit_price=body.get('exit_price'),
+            notes=body.get('notes'),
         )
         
         return {"success": success}
@@ -412,6 +408,35 @@ async def get_trade_history(limit: int = 100):
     except Exception as e:
         import traceback
         return {"error": str(e), "traceback": traceback.format_exc()}
+
+@app.get("/funding_rate/{exchange}/{symbol}")
+async def get_funding_rate(exchange: str, symbol: str):
+    """Get funding rate for a specific symbol."""
+    try:
+        from .services.funding_rate import fetch_funding_rate
+        
+        result = await fetch_funding_rate(exchange, symbol)
+        
+        if result is None:
+            return {"error": "Failed to fetch funding rate"}
+        
+        funding_rate, next_funding_time = result
+        
+        # Calculate annualized rate (funding happens every 8 hours = 3x per day)
+        funding_rate_annual = funding_rate * 3 * 365 * 100  # Convert to percentage
+        
+        return {
+            "exchange": exchange,
+            "symbol": symbol,
+            "funding_rate": funding_rate,
+            "funding_rate_annual": funding_rate_annual,
+            "next_funding_time": next_funding_time,
+        }
+    
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
 
 @app.get("/portfolio/stats")
 async def get_portfolio_stats():

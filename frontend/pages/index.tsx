@@ -61,6 +61,11 @@ type Metric = {
   stoch_k?: number | null;
   stoch_d?: number | null;
   
+  // Funding Rate
+  funding_rate?: number | null;
+  funding_rate_annual?: number | null;
+  next_funding_time?: number | null;
+  
   ts: number;
 };
 
@@ -150,6 +155,10 @@ export default function Home() {
     bt90?: any;
     news?: NewsArticle[];
     newsLoading?: boolean;
+    fundingRate?: number | null;
+    fundingRateAnnual?: number | null;
+    nextFundingTime?: number | null;
+    fundingLoading?: boolean;
   }>({ open: false });
   const [query, setQuery] = useState('');
 
@@ -567,16 +576,17 @@ export default function Home() {
       (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}:8000` : 'http://127.0.0.1:8000');
 
     // Show modal immediately with row data; load history + plan + backtests + news async
-    setModal({ open: true, row: r, closes: [], oi: [], loading: true, plan: null, bt30: null, bt90: null, news: [], newsLoading: true });
+    setModal({ open: true, row: r, closes: [], oi: [], loading: true, plan: null, bt30: null, bt90: null, news: [], newsLoading: true, fundingRate: null, fundingRateAnnual: null, nextFundingTime: null, fundingLoading: true });
 
     try {
-      const [histResp, oiResp, planResp, bt30Resp, bt90Resp, newsResp] = await Promise.all([
+      const [histResp, oiResp, planResp, bt30Resp, bt90Resp, newsResp, fundingResp] = await Promise.all([
         fetch(`${backendBase}/debug/history?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&limit=60`),
         fetch(`${backendBase}/debug/oi_history?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&limit=60`),
         fetch(`${backendBase}/meta/trade_plan?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}`),
         fetch(`${backendBase}/meta/backtest?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&window_days=30`),
         fetch(`${backendBase}/meta/backtest?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&window_days=90`),
         fetch(`${backendBase}/news/${encodeURIComponent(exchange)}/${encodeURIComponent(r.symbol)}`),
+        fetch(`${backendBase}/funding_rate/${encodeURIComponent(exchange)}/${encodeURIComponent(r.symbol)}`),
       ]);
       const j = histResp.ok ? await histResp.json() : { closes: [] };
       const o = oiResp.ok ? await oiResp.json() : { oi: [] };
@@ -584,6 +594,7 @@ export default function Home() {
       const b30 = bt30Resp.ok ? await bt30Resp.json() : null;
       const b90 = bt90Resp.ok ? await bt90Resp.json() : null;
       const n = newsResp.ok ? await newsResp.json() : { articles: [] };
+      const f = fundingResp.ok ? await fundingResp.json() : { error: 'Failed' };
       setModal((m) => ({
         ...m,
         open: true,
@@ -596,6 +607,10 @@ export default function Home() {
         news: n.articles || [],
         newsLoading: false,
         loading: false,
+        fundingRate: f.error ? null : f.funding_rate,
+        fundingRateAnnual: f.error ? null : f.funding_rate_annual,
+        nextFundingTime: f.error ? null : f.next_funding_time,
+        fundingLoading: false,
       }));
     } catch (e) {
       setModal((m) => ({ ...m, open: true, row: r, closes: [], oi: [], news: [], newsLoading: false, loading: false }));
@@ -1124,6 +1139,10 @@ export default function Home() {
           bt90={modal.bt90 || null}
           news={modal.news || []}
           newsLoading={!!modal.newsLoading}
+          fundingRate={modal.fundingRate}
+          fundingRateAnnual={modal.fundingRateAnnual}
+          nextFundingTime={modal.nextFundingTime}
+          fundingLoading={!!modal.fundingLoading}
           isFav={favs.includes(idOf(modal.row))}
           onToggleFav={() => toggleFav(idOf(modal.row!), favs, setFavs)}
           onClose={() => setModal({ open: false })}
@@ -1331,6 +1350,10 @@ function DetailsModal({
   bt90,
   news,
   newsLoading,
+  fundingRate,
+  fundingRateAnnual,
+  nextFundingTime,
+  fundingLoading,
   isFav,
   onToggleFav,
   onClose,
@@ -1347,6 +1370,10 @@ function DetailsModal({
   bt90: any;
   news: NewsArticle[];
   newsLoading: boolean;
+  fundingRate?: number | null;
+  fundingRateAnnual?: number | null;
+  nextFundingTime?: number | null;
+  fundingLoading?: boolean;
   isFav: boolean;
   onToggleFav: () => void;
   onClose: () => void;
@@ -1709,6 +1736,58 @@ function DetailsModal({
                     <Sparkline data={toDeltaSeries(oi || [])} color={deltaColor(oi || [])} />
                   </div>
                 </div>
+
+                {/* Funding Rate Section */}
+                {fundingLoading ? (
+                  <div style={{ marginTop: 16 }}>
+                    <div className="muted" style={{ fontSize: 12 }}>Loading funding rate...</div>
+                  </div>
+                ) : fundingRate !== null && fundingRate !== undefined ? (
+                  <div style={{ marginTop: 16 }}>
+                    <div className="muted" style={{ fontSize: 12, marginBottom: 8, fontWeight: 600 }}>💰 Funding Rate (Perpetual)</div>
+                    <div className="card" style={{ padding: 16, background: 'rgba(0,0,0,0.2)' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 16 }}>
+                        <div>
+                          <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>Current Rate (8h)</div>
+                          <div style={{ fontSize: 24, fontWeight: 700, color: fundingRate >= 0 ? '#e76f51' : '#2a9d8f' }}>
+                            {fundingRate >= 0 ? '+' : ''}{(fundingRate * 100).toFixed(4)}%
+                          </div>
+                          <div style={{ fontSize: 10, color: '#666', marginTop: 2 }}>
+                            {fundingRate >= 0 ? 'Longs pay shorts 💸' : 'Shorts pay longs 💰'}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>Annualized (APR)</div>
+                          <div style={{ fontSize: 24, fontWeight: 700, color: fundingRateAnnual && fundingRateAnnual >= 0 ? '#e76f51' : '#2a9d8f' }}>
+                            {fundingRateAnnual !== null && fundingRateAnnual !== undefined ? (
+                              `${fundingRateAnnual >= 0 ? '+' : ''}${fundingRateAnnual.toFixed(2)}%`
+                            ) : '—'}
+                          </div>
+                          <div style={{ fontSize: 10, color: '#666', marginTop: 2 }}>
+                            3x daily funding
+                          </div>
+                        </div>
+                        {nextFundingTime && (
+                          <div>
+                            <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>Next Funding</div>
+                            <div style={{ fontSize: 16, fontWeight: 600 }}>
+                              {new Date(nextFundingTime).toLocaleTimeString()}
+                            </div>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: '#4a9eff', marginTop: 2 }}>
+                              {(() => {
+                                const now = Date.now();
+                                const diff = nextFundingTime - now;
+                                const hours = Math.floor(diff / (1000 * 60 * 60));
+                                const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                                return `⏱ ${hours}h ${minutes}m`;
+                              })()}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             )}
 

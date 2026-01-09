@@ -91,6 +91,11 @@ class SymbolMetrics(BaseModel):
     stoch_k: Optional[float] = None  # Stochastic RSI %K (0 to 100)
     stoch_d: Optional[float] = None  # Stochastic RSI %D (0 to 100)
     
+    # Funding Rate (Perpetual Futures)
+    funding_rate: Optional[float] = None  # Current funding rate (e.g., 0.0001 = 0.01%)
+    funding_rate_annual: Optional[float] = None  # Annualized funding rate (%)
+    next_funding_time: Optional[int] = None  # Next funding time (milliseconds timestamp)
+    
     ts: int = Field(default_factory=lambda: int(datetime.utcnow().timestamp()*1000))
 
 class ScreenerSnapshot(BaseModel):
