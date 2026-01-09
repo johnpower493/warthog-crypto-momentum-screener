@@ -654,9 +654,21 @@ export default function Home() {
     <div className="container">
       <div className="panel">
         <div className="toolbar">
-          <div className="group">
+          <div className="group" style={{ flexWrap: 'wrap' }}>
             <span className="badge">Exchange: Binance Perp</span>
             <span className="badge">Pairs: {sorted.length}</span>
+            <span className="badge">
+              {status==='connected'?'Live':status==='connecting'?'Connecting…':'Disconnected'} · {source==='ws'?'WS':'HTTP'}
+            </span>
+            <span className="badge" title="Stale symbol counts (ticker/kline)">
+              Stale B(t/k): {staleCount.binanceTicker}/{staleCount.binanceKline} · Y(t/k): {staleCount.bybitTicker}/{staleCount.bybitKline}
+            </span>
+            <span className="badge" title="4h Cipher alert sentiment (BUY vs SELL counts)">
+              4h Sentiment: {sentiment ? `${sentiment.bias} (${sentiment.buy}/${sentiment.sell})` : '—'}
+            </span>
+            <span className="badge" title="4h sentiment by exchange">
+              B: {sentimentBinance ? `${sentimentBinance.bias} (${sentimentBinance.buy}/${sentimentBinance.sell})` : '—'} · Y: {sentimentBybit ? `${sentimentBybit.bias} (${sentimentBybit.buy}/${sentimentBybit.sell})` : '—'}
+            </span>
           </div>
           <div className="group">
             <input className="input" placeholder="Search symbol (e.g. BTC)" value={query} onChange={e=>setQuery(e.target.value)} />
@@ -753,18 +765,6 @@ export default function Home() {
               <option value="last_price">Sort: Last</option>
               <option value="symbol">Sort: Symbol</option>
             </select>
-            <span className="badge">
-              {status==='connected'?'Live':status==='connecting'?'Connecting…':'Disconnected'} · {source==='ws'?'WS':'HTTP'}
-            </span>
-            <span className="badge" title="Stale symbol counts (ticker/kline)">
-              Stale B(t/k): {staleCount.binanceTicker}/{staleCount.binanceKline} · Y(t/k): {staleCount.bybitTicker}/{staleCount.bybitKline}
-            </span>
-            <span className="badge" title="4h Cipher alert sentiment (BUY vs SELL counts)">
-              4h Sentiment: {sentiment ? `${sentiment.bias} (${sentiment.buy}/${sentiment.sell})` : '—'}
-            </span>
-            <span className="badge" title="4h sentiment by exchange">
-              B: {sentimentBinance ? `${sentimentBinance.bias} (${sentimentBinance.buy}/${sentimentBinance.sell})` : '—'} · Y: {sentimentBybit ? `${sentimentBybit.bias} (${sentimentBybit.buy}/${sentimentBybit.sell})` : '—'}
-            </span>
             <button
               className="button"
               onClick={async ()=>{
