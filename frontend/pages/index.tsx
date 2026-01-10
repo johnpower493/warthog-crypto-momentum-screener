@@ -1466,9 +1466,18 @@ function DetailsModal({
   };
 
   return (
-    <div className="modalOverlay" onClick={onClose}>
-      <div className="panel modalSheet" onClick={(e) => e.stopPropagation()}>
-        <div className="toolbar" style={{ position: 'sticky', top: 0, zIndex: 10, background: 'rgba(12,19,30,0.98)', backdropFilter: 'blur(12px)', borderBottom: '1px solid var(--border)' }}>
+    <div className="modalOverlay" onClick={onClose} style={{ padding: '0', alignItems: 'stretch', overflow: 'hidden' }}>
+      <div className="panel modalSheet" onClick={(e) => e.stopPropagation()} style={{ 
+        width: '100%', 
+        maxWidth: '100vw',
+        height: '100vh',
+        margin: '0',
+        borderRadius: '0',
+        overflowX: 'hidden',
+        overflowY: 'auto',
+        boxSizing: 'border-box'
+      } as any}>
+        <div className="toolbar" style={{ position: 'sticky', top: 0, zIndex: 10, background: 'rgba(12,19,30,0.98)', backdropFilter: 'blur(12px)', borderBottom: '1px solid var(--border)', padding: '12px 12px', boxSizing: 'border-box', width: '100%', maxWidth: '100vw' }}>
           <div className="modalHandle" />
           <div className="group" style={{ gap: 12, alignItems: 'center', flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1584,7 +1593,7 @@ function DetailsModal({
 
         <div style={{ padding: 16 }}>
             {activeTab === 'overview' && (
-              <div>
+              <div style={{ padding: 12, boxSizing: 'border-box', width: '100%', maxWidth: '100vw', overflowX: 'hidden' }}>
                 {/* Key Metrics Cards */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
                   <div className="card" style={{ padding: 12 }}>
@@ -1649,7 +1658,7 @@ function DetailsModal({
                   row.wt1 !== null || row.percent_r_fast !== null) && (
                   <div style={{ marginBottom: 16 }}>
                     <div className="muted" style={{ fontSize: 12, marginBottom: 8, fontWeight: 600 }}>📊 Active Signals & Indicators</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                       
                       {/* Cipher B Card */}
                       {(row.wt1 !== null || row.cipher_buy || row.cipher_sell) && (
@@ -1722,7 +1731,14 @@ function DetailsModal({
                 )}
 
                 {/* Price Charts */}
-                <div className="chartsGrid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className="chartsGrid" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
+                  <style jsx>{`
+                    @media (min-width: 640px) {
+                      .chartsGrid {
+                        grid-template-columns: 1fr 1fr !important;
+                      }
+                    }
+                  `}</style>
                   <div className="card" style={{ padding: 12 }}>
                     <div className="muted" style={{ marginBottom: 8, fontSize: 12, fontWeight: 600 }}>
                       Last 60 x 1m closes {loading ? '(loading...)' : ''}
@@ -1746,7 +1762,7 @@ function DetailsModal({
                   <div style={{ marginTop: 16 }}>
                     <div className="muted" style={{ fontSize: 12, marginBottom: 8, fontWeight: 600 }}>💰 Funding Rate (Perpetual)</div>
                     <div className="card" style={{ padding: 16, background: 'rgba(0,0,0,0.2)' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 16 }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                         <div>
                           <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>Current Rate (8h)</div>
                           <div style={{ fontSize: 24, fontWeight: 700, color: fundingRate >= 0 ? '#e76f51' : '#2a9d8f' }}>
@@ -1792,7 +1808,7 @@ function DetailsModal({
             )}
 
             {activeTab === 'plan' && (
-              <div>
+              <div style={{ padding: 12, boxSizing: 'border-box', width: '100%', maxWidth: '100vw', overflowX: 'hidden' }}>
                 {/* Trade Plan Section */}
                 {plan ? (
                   <div className="card" style={{ padding: 16, marginBottom: 16 }}>
@@ -1983,12 +1999,12 @@ function DetailsModal({
             )}
 
             {activeTab === 'indicators' && (
-              <div style={{ padding: 16 }}>
+              <div style={{ padding: 12, boxSizing: 'border-box', width: '100%', maxWidth: '100vw', overflowX: 'hidden' }}>
                 <div className="muted" style={{ fontSize: 12, marginBottom: 12, fontWeight: 600 }}>
                   📊 Technical Indicators (15m Timeframe)
                 </div>
                 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                   
                   {/* RSI Card */}
                   <div className="card" style={{ padding: 12 }}>
@@ -2090,7 +2106,7 @@ function DetailsModal({
             )}
 
             {activeTab === 'news' && (
-              <div>
+              <div style={{ padding: 12, boxSizing: 'border-box', width: '100%', maxWidth: '100vw', overflowX: 'hidden' }}>
                 {newsLoading && (
                   <div className="card" style={{ padding: 32, textAlign: 'center' }}>
                     <div className="muted">Loading news articles...</div>
