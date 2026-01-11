@@ -409,6 +409,8 @@ async def get_trade_history(limit: int = 100):
         import traceback
         return {"error": str(e), "traceback": traceback.format_exc()}
 
+# ==================== Funding Rate ====================
+
 @app.get("/funding_rate/{exchange}/{symbol}")
 async def get_funding_rate(exchange: str, symbol: str):
     """Get funding rate for a specific symbol."""
@@ -603,11 +605,168 @@ async def meta_alerts(
     }
 
 
+@app.get("/alerts/history")
+async def alerts_history(
+    exchange: str | None = None,
+    limit: int = 200,
+    signal: str | None = None,
+    source_tf: str | None = None,
+    min_grade: str | None = None,
+):
+    """Get persisted signal alerts history for the Alerts/History page.
+    
+    This is the historical alerts from the screener's signal detection system,
+    NOT custom price alerts set by users.
+    """
+    from .services.alert_store import get_recent_alerts
+    
+    alerts = get_recent_alerts(
+        exchange=exchange,
+        limit=limit,
+        since_ts=None,  # No time filter - get all historical alerts
+        signal=signal,
+        source_tf=source_tf,
+        min_grade=min_grade,
+    )
+    
+    # Transform to match frontend expected format
+    return [
+        {
+            "id": a["id"],
+            "ts": a["created_ts"] or a["ts"],
+            "exchange": a["exchange"],
+            "symbol": a["symbol"],
+            "signal": a["signal"],
+            "source_tf": a.get("source_tf"),
+            "reason": a.get("reason"),
+            "price": a.get("price"),
+            "grade": a.get("setup_grade"),
+        }
+        for a in alerts
+    ]
+
+
 @app.get("/meta/trade_plan")
 async def meta_trade_plan(exchange: str, symbol: str):
     from .services.alert_store import get_latest_trade_plan
     plan = get_latest_trade_plan(exchange, symbol)
     return {"exchange": exchange, "symbol": symbol, "plan": plan}
+
+
+@app.get("/symbol/details")
+async def symbol_details(exchange: str, symbol: str):
+    """Combined endpoint for symbol details modal - reduces 7 API calls to 1.
+    
+    Returns: history, oi_history, trade_plan, backtest (30d & 90d), news, funding_rate
+    """
+    import json
+    from .services.alert_store import get_latest_trade_plan
+    from .services.ohlc_store import init_db, _DB_LOCK, _CONN
+    from .services.backtester import STRATEGY_VERSION
+    from .services.news import get_news_provider
+    from .services.funding_rate import fetch_funding_rate
+    
+    result = {
+        "exchange": exchange,
+        "symbol": symbol,
+        "closes": [],
+        "oi": [],
+        "plan": None,
+        "bt30": None,
+        "bt90": None,
+        "news": [],
+        "funding": None,
+    }
+    
+    # Get history data
+    try:
+        if exchange == 'binance':
+            result["closes"] = stream_mgr.agg.get_history(symbol, 60)
+            result["oi"] = stream_mgr.agg.get_oi_history(symbol, 60)
+        elif exchange == 'bybit':
+            result["closes"] = stream_mgr.agg_bybit.get_history(symbol, 60)
+            result["oi"] = stream_mgr.agg_bybit.get_oi_history(symbol, 60)
+    except Exception:
+        pass
+    
+    # Get trade plan
+    try:
+        result["plan"] = get_latest_trade_plan(exchange, symbol)
+    except Exception:
+        pass
+    
+    # Get backtest results (30d and 90d)
+    try:
+        init_db()
+        with _DB_LOCK:
+            for window_days in [30, 90]:
+                cur = _CONN.execute(
+                    """
+                    SELECT ts, n_trades, win_rate, avg_r, avg_mae_r, avg_mfe_r, avg_bars_to_resolve, results_json
+                    FROM backtest_results
+                    WHERE exchange=? AND symbol=? AND window_days=? AND strategy_version=?
+                    """,
+                    (exchange, symbol, window_days, STRATEGY_VERSION),
+                )
+                row = cur.fetchone()
+                if row:
+                    bt_data = {
+                        "window_days": window_days,
+                        "ts": row[0],
+                        "n_trades": row[1],
+                        "win_rate": row[2],
+                        "avg_r": row[3],
+                        "avg_mae_r": row[4],
+                        "avg_mfe_r": row[5],
+                        "avg_bars_to_resolve": row[6],
+                        "result": json.loads(row[7]) if row[7] else None,
+                    }
+                    if window_days == 30:
+                        result["bt30"] = bt_data
+                    else:
+                        result["bt90"] = bt_data
+    except Exception:
+        pass
+    
+    # Fetch news and funding rate concurrently
+    try:
+        news_task = asyncio.create_task(_fetch_news_safe(symbol))
+        funding_task = asyncio.create_task(_fetch_funding_safe(exchange, symbol))
+        
+        news_result, funding_result = await asyncio.gather(news_task, funding_task)
+        result["news"] = news_result
+        result["funding"] = funding_result
+    except Exception:
+        pass
+    
+    return result
+
+
+async def _fetch_news_safe(symbol: str):
+    """Fetch news with error handling."""
+    try:
+        from .services.news import get_news_provider
+        provider = get_news_provider()
+        return await provider.get_news(symbol, limit=20)
+    except Exception:
+        return []
+
+
+async def _fetch_funding_safe(exchange: str, symbol: str):
+    """Fetch funding rate with error handling."""
+    try:
+        from .services.funding_rate import fetch_funding_rate
+        result = await fetch_funding_rate(exchange, symbol)
+        if result:
+            funding_rate, next_funding_time = result
+            return {
+                "funding_rate": funding_rate,
+                "funding_rate_annual": funding_rate * 3 * 365 * 100,
+                "next_funding_time": next_funding_time,
+            }
+    except Exception:
+        pass
+    return None
 
 
 @app.post("/meta/backtest/run")
@@ -713,6 +872,65 @@ async def meta_sentiment(exchange: str | None = None, window_minutes: int = 240)
         "total": total,
         "score": score,
         "bias": bias,
+    }
+
+
+@app.get("/meta/sentiment/all")
+async def meta_sentiment_all(window_minutes: int = 240):
+    """Combined sentiment endpoint - returns all, binance, and bybit sentiment in one call.
+    
+    Reduces 3 API calls to 1 for the main dashboard.
+    """
+    import time
+    from .services.ohlc_store import init_db
+    from .services.ohlc_store import _DB_LOCK, _CONN  # type: ignore
+    init_db()
+    since_ts = int(time.time() * 1000) - int(window_minutes * 60 * 1000)
+
+    def calc_sentiment(buy: int, sell: int):
+        total = buy + sell
+        score = ((buy - sell) / total) if total else 0.0
+        bias = "bullish" if score > 0.1 else "bearish" if score < -0.1 else "neutral"
+        return {"buy": buy, "sell": sell, "total": total, "score": score, "bias": bias}
+
+    with _DB_LOCK:
+        # Single query to get counts by exchange and signal
+        cur = _CONN.execute(
+            """
+            SELECT exchange, signal, COUNT(*)
+            FROM alerts
+            WHERE created_ts >= ?
+            GROUP BY exchange, signal
+            """,
+            (since_ts,),
+        )
+        rows = cur.fetchall()
+
+    # Aggregate counts
+    all_buy, all_sell = 0, 0
+    binance_buy, binance_sell = 0, 0
+    bybit_buy, bybit_sell = 0, 0
+
+    for exchange, signal, count in rows:
+        if signal == "BUY":
+            all_buy += count
+            if exchange == "binance":
+                binance_buy = count
+            elif exchange == "bybit":
+                bybit_buy = count
+        elif signal == "SELL":
+            all_sell += count
+            if exchange == "binance":
+                binance_sell = count
+            elif exchange == "bybit":
+                bybit_sell = count
+
+    return {
+        "window_minutes": window_minutes,
+        "since_ts": since_ts,
+        "all": calc_sentiment(all_buy, all_sell),
+        "binance": calc_sentiment(binance_buy, binance_sell),
+        "bybit": calc_sentiment(bybit_buy, bybit_sell),
     }
 
 

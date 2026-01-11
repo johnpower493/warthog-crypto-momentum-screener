@@ -148,6 +148,12 @@ def init_db(path: str = "ohlc.sqlite3"):
 
             _CONN.execute("CREATE INDEX IF NOT EXISTS idx_alerts_lookup ON alerts(exchange, symbol, ts)")
             _CONN.execute("CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(exchange, created_ts)")
+            # Performance indices for filtered queries (feed page, analysis)
+            _CONN.execute("CREATE INDEX IF NOT EXISTS idx_alerts_grade ON alerts(setup_grade)")
+            _CONN.execute("CREATE INDEX IF NOT EXISTS idx_alerts_signal ON alerts(signal)")
+            _CONN.execute("CREATE INDEX IF NOT EXISTS idx_alerts_source_tf ON alerts(source_tf)")
+            # Composite index for common feed query pattern
+            _CONN.execute("CREATE INDEX IF NOT EXISTS idx_alerts_feed ON alerts(created_ts, setup_grade, signal, source_tf)")
 
             # Trade plans linked to alerts
             _CONN.execute(

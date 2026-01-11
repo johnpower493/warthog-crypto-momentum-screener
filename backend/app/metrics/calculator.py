@@ -32,6 +32,16 @@ class SymbolState:
         self.atr: Optional[float] = None
         self.open_interest: Optional[float] = None
         
+        # Open prices for MFI calculation
+        self.open_1m = RollingSeries(maxlen=maxlen)
+        
+        # ATR history for volatility percentile
+        self.atr_history: list[float] = []
+        
+        # Signal timestamps for "time since signal"
+        self.last_cipher_signal_ts: Optional[int] = None
+        self.last_percent_r_signal_ts: Optional[int] = None
+        
         # Indicator cache to avoid recalculating expensive indicators
         # Cache structure: {indicator_key: (timestamp_ms, cached_value)}
         self._indicator_cache: Dict[str, tuple[int, any]] = {}
@@ -141,9 +151,16 @@ class SymbolState:
         self.high_1m.append(k.high)
         self.low_1m.append(k.low)
         self.vol_1m.append(k.volume)
+        self.open_1m.append(k.open)  # For MFI calculation
         self.last_price = k.close
         if len(self.close_1m.values) >= ATR_PERIOD+1:
             self.atr = compute_atr(list(self.high_1m.values), list(self.low_1m.values), list(self.close_1m.values))
+            # Track ATR history for volatility percentile
+            if self.atr is not None:
+                self.atr_history.append(self.atr)
+                # Keep last 100 ATR values
+                if len(self.atr_history) > 100:
+                    self.atr_history = self.atr_history[-100:]
         # update higher timeframe resamplers
         try:
             self._resample_htf(k)
@@ -339,6 +356,74 @@ class SymbolState:
             lambda: stochastic_rsi(closes_15m, rsi_period=14, stoch_period=14, k_smooth=3, d_smooth=3) if len(closes_15m) >= 35 else (None, None)
         )
         
+        # Money Flow Index (Cipher B style) - Multiple Timeframes
+        # 1h MFI (1m data, 60 periods = 1 hour)
+        mfi_1h_val = money_flow_index(
+            list(self.open_1m.values),
+            list(self.high_1m.values),
+            list(self.low_1m.values),
+            list(self.close_1m.values),
+            period=60,
+            multiplier=150,
+        )
+        
+        # 15m MFI (15m data, 60 periods = 15 hours)
+        mfi_15m_val = None
+        if len(self._htf['15m']['close'].values) >= 60:
+            # Need to track opens for 15m - use close approximation or add open tracking
+            closes_15m_list = list(self._htf['15m']['close'].values)
+            highs_15m_list = list(self._htf['15m']['high'].values)
+            lows_15m_list = list(self._htf['15m']['low'].values)
+            # Approximate open as previous close (common approximation)
+            opens_15m_approx = [closes_15m_list[0]] + closes_15m_list[:-1]
+            mfi_15m_val = money_flow_index(
+                opens_15m_approx,
+                highs_15m_list,
+                lows_15m_list,
+                closes_15m_list,
+                period=60,
+                multiplier=150,
+            )
+        
+        # 4h MFI (4h data, 60 periods = 10 days)
+        mfi_4h_val = None
+        if len(self._htf['4h']['close'].values) >= 60:
+            closes_4h_list = list(self._htf['4h']['close'].values)
+            highs_4h_list = list(self._htf['4h']['high'].values)
+            lows_4h_list = list(self._htf['4h']['low'].values)
+            opens_4h_approx = [closes_4h_list[0]] + closes_4h_list[:-1]
+            mfi_4h_val = money_flow_index(
+                opens_4h_approx,
+                highs_4h_list,
+                lows_4h_list,
+                closes_4h_list,
+                period=60,
+                multiplier=150,
+            )
+        
+        # Multi-Timeframe Confluence
+        wt_1m_tuple = (wt1_1m, wt2_1m, wt1_prev_1m, wt2_prev_1m)
+        mtf_bull, mtf_bear, mtf_summary_str = mtf_confluence(
+            wt_1m_tuple, wt15, wt4h, r15m, r4h
+        )
+        
+        # Volatility Percentile
+        vol_pct = volatility_percentile(self.atr_history, self.atr, lookback=30) if self.atr else None
+        
+        # Time Since Signal - update timestamps if signal fired
+        now_ms = int(time.time() * 1000)
+        if cipher_buy is True or cipher_sell is True:
+            self.last_cipher_signal_ts = now_ms
+        if percent_r_os_reversal is True or percent_r_ob_reversal is True:
+            self.last_percent_r_signal_ts = now_ms
+        
+        # Calculate age
+        cipher_age = (now_ms - self.last_cipher_signal_ts) if self.last_cipher_signal_ts else None
+        percent_r_age = (now_ms - self.last_percent_r_signal_ts) if self.last_percent_r_signal_ts else None
+        
+        # Sector Tags
+        tags = get_sector_tags(self.symbol)
+        
         return SymbolMetrics(
             symbol=self.symbol,
             exchange=self.exchange,
@@ -389,6 +474,17 @@ class SymbolState:
             macd_histogram=macd_hist_val,
             stoch_k=stoch_k_val,
             stoch_d=stoch_d_val,
+            # New metrics
+            mfi_1h=mfi_1h_val,
+            mfi_15m=mfi_15m_val,
+            mfi_4h=mfi_4h_val,
+            mtf_bull_count=mtf_bull,
+            mtf_bear_count=mtf_bear,
+            mtf_summary=mtf_summary_str,
+            volatility_percentile=vol_pct,
+            cipher_signal_age_ms=cipher_age,
+            percent_r_signal_age_ms=percent_r_age,
+            sector_tags=tags if tags else None,
         )
 
 def _ema_series(values: list[float], length: int) -> list[float]:
@@ -1088,6 +1184,232 @@ def stochastic_rsi(closes: list[float], rsi_period: int = 14, stoch_period: int 
         return k_smoothed, d_value
     except Exception:
         return None, None
+
+
+def money_flow_index(
+    opens: list[float],
+    highs: list[float],
+    lows: list[float],
+    closes: list[float],
+    period: int = 60,
+    multiplier: float = 150,
+) -> Optional[float]:
+    """Calculate Money Flow Index (Cipher B style).
+    
+    This is based on the cipher_b.txt formula:
+    MFI = SMA(((close - open) / (high - low)) * multiplier, period)
+    
+    Positive MFI = Buying pressure (close > open on average)
+    Negative MFI = Selling pressure (close < open on average)
+    
+    Returns: MFI value (typically ranges from -50 to +50)
+    """
+    if len(closes) < period or len(opens) < period or len(highs) < period or len(lows) < period:
+        return None
+    
+    try:
+        mfi_series = []
+        n = min(len(opens), len(highs), len(lows), len(closes))
+        
+        for i in range(n):
+            high_low_range = highs[i] - lows[i]
+            if high_low_range == 0:
+                mfi_series.append(0)
+            else:
+                # ((close - open) / (high - low)) * multiplier
+                mfi_val = ((closes[i] - opens[i]) / high_low_range) * multiplier
+                mfi_series.append(mfi_val)
+        
+        if len(mfi_series) < period:
+            return None
+        
+        # SMA of the MFI series
+        mfi = sum(mfi_series[-period:]) / period
+        return mfi
+    except Exception:
+        return None
+
+
+def volatility_percentile(
+    atr_history: list[float],
+    current_atr: float,
+    lookback: int = 30,
+) -> Optional[float]:
+    """Calculate what percentile current volatility (ATR) is vs recent history.
+    
+    Returns: 0-100 percentile
+    - High percentile (>80) = High volatility, potential breakout/breakdown
+    - Low percentile (<20) = Low volatility, compression, breakout expected
+    """
+    if len(atr_history) < lookback or current_atr is None:
+        return None
+    
+    try:
+        recent = atr_history[-lookback:]
+        count_below = sum(1 for x in recent if x < current_atr)
+        percentile = (count_below / len(recent)) * 100
+        return percentile
+    except Exception:
+        return None
+
+
+def mtf_confluence(
+    wt_1m: tuple,
+    wt_15m: tuple,
+    wt_4h: tuple,
+    r_15m: tuple,
+    r_4h: tuple,
+) -> tuple[int, int, str]:
+    """Calculate Multi-Timeframe Confluence.
+    
+    Checks how many timeframes agree on direction.
+    
+    Returns: (bullish_count, bearish_count, summary)
+    - bullish_count: 0-5 (how many TFs are bullish)
+    - bearish_count: 0-5 (how many TFs are bearish)
+    - summary: "5/5 Bullish", "3/5 Bearish", "Mixed", etc.
+    """
+    bullish = 0
+    bearish = 0
+    total = 0
+    
+    # Check 1m WT
+    if wt_1m and len(wt_1m) >= 2 and wt_1m[0] is not None and wt_1m[1] is not None:
+        total += 1
+        if wt_1m[0] > wt_1m[1]:  # wt1 > wt2 = bullish
+            bullish += 1
+        else:
+            bearish += 1
+    
+    # Check 15m WT
+    if wt_15m and len(wt_15m) >= 2 and wt_15m[0] is not None and wt_15m[1] is not None:
+        total += 1
+        if wt_15m[0] > wt_15m[1]:
+            bullish += 1
+        else:
+            bearish += 1
+    
+    # Check 4h WT
+    if wt_4h and len(wt_4h) >= 2 and wt_4h[0] is not None and wt_4h[1] is not None:
+        total += 1
+        if wt_4h[0] > wt_4h[1]:
+            bullish += 1
+        else:
+            bearish += 1
+    
+    # Check 15m %R (inverted: higher = more bullish on %R scale)
+    if r_15m and len(r_15m) >= 2 and r_15m[0] is not None:
+        total += 1
+        if r_15m[0] > -50:  # Above -50 = bullish territory
+            bullish += 1
+        else:
+            bearish += 1
+    
+    # Check 4h %R
+    if r_4h and len(r_4h) >= 2 and r_4h[0] is not None:
+        total += 1
+        if r_4h[0] > -50:
+            bullish += 1
+        else:
+            bearish += 1
+    
+    # Build summary
+    if total == 0:
+        return 0, 0, "No data"
+    
+    if bullish == total:
+        summary = f"{bullish}/{total} Bullish ✓"
+    elif bearish == total:
+        summary = f"{bearish}/{total} Bearish ✗"
+    elif bullish > bearish:
+        summary = f"{bullish}/{total} Bullish"
+    elif bearish > bullish:
+        summary = f"{bearish}/{total} Bearish"
+    else:
+        summary = f"Mixed ({bullish}B/{bearish}S)"
+    
+    return bullish, bearish, summary
+
+
+# Sector tags mapping
+SECTOR_TAGS = {
+    # Layer 1s
+    'BTCUSDT': ['L1', 'Store of Value', 'Top 10'],
+    'ETHUSDT': ['L1', 'Smart Contract', 'Top 10'],
+    'SOLUSDT': ['L1', 'Smart Contract', 'Top 10'],
+    'AVAXUSDT': ['L1', 'Smart Contract', 'Top 20'],
+    'ADAUSDT': ['L1', 'Smart Contract', 'Top 20'],
+    'DOTUSDT': ['L1', 'Interoperability', 'Top 20'],
+    'ATOMUSDT': ['L1', 'Interoperability', 'Top 30'],
+    'NEARUSDT': ['L1', 'Smart Contract', 'Top 30'],
+    'APTUSDT': ['L1', 'Smart Contract', 'Top 30'],
+    'SUIUSDT': ['L1', 'Smart Contract', 'Top 50'],
+    'SEIUSDT': ['L1', 'Smart Contract', 'Top 100'],
+    'INJUSDT': ['L1', 'DeFi', 'Top 50'],
+    'TONUSDT': ['L1', 'Messaging', 'Top 20'],
+    
+    # Layer 2s
+    'MATICUSDT': ['L2', 'Ethereum', 'Top 20'],
+    'ARBUSDT': ['L2', 'Ethereum', 'Top 50'],
+    'OPUSDT': ['L2', 'Ethereum', 'Top 50'],
+    'STXUSDT': ['L2', 'Bitcoin', 'Top 50'],
+    
+    # DeFi
+    'LINKUSDT': ['DeFi', 'Oracle', 'Top 20'],
+    'UNIUSDT': ['DeFi', 'DEX', 'Top 30'],
+    'AAVEUSDT': ['DeFi', 'Lending', 'Top 50'],
+    'MKRUSDT': ['DeFi', 'Stablecoin', 'Top 50'],
+    'CRVUSDT': ['DeFi', 'DEX', 'Top 100'],
+    'COMPUSDT': ['DeFi', 'Lending', 'Top 100'],
+    'SNXUSDT': ['DeFi', 'Derivatives', 'Top 100'],
+    'LDOUSDT': ['DeFi', 'Staking', 'Top 50'],
+    'RNDRUSDT': ['DeFi', 'AI', 'Top 50'],
+    '1INCHUSDT': ['DeFi', 'DEX', 'Top 100'],
+    'GMXUSDT': ['DeFi', 'Derivatives', 'Top 100'],
+    'DYDXUSDT': ['DeFi', 'Derivatives', 'Top 100'],
+    
+    # Meme coins
+    'DOGEUSDT': ['Meme', 'Top 10'],
+    'SHIBUSDT': ['Meme', 'Top 20'],
+    'PEPEUSDT': ['Meme', 'Top 50'],
+    'FLOKIUSDT': ['Meme', 'Top 100'],
+    'BONKUSDT': ['Meme', 'Solana', 'Top 100'],
+    'WIFUSDT': ['Meme', 'Solana', 'Top 100'],
+    
+    # AI & Compute
+    'FETUSDT': ['AI', 'Top 50'],
+    'AGIXUSDT': ['AI', 'Top 100'],
+    'OCEANUSDT': ['AI', 'Data', 'Top 100'],
+    'TAOUSDT': ['AI', 'Top 100'],
+    'AKTUSDT': ['AI', 'Compute', 'Top 100'],
+    
+    # Gaming & Metaverse
+    'AXSUSDT': ['Gaming', 'Top 100'],
+    'SANDUSDT': ['Metaverse', 'Top 100'],
+    'MANAUSDT': ['Metaverse', 'Top 100'],
+    'ENJUSDT': ['Gaming', 'NFT', 'Top 100'],
+    'GALAUSDT': ['Gaming', 'Top 100'],
+    'IMXUSDT': ['Gaming', 'L2', 'Top 50'],
+    
+    # Infrastructure
+    'FILUSDT': ['Storage', 'Top 50'],
+    'ARUSDT': ['Storage', 'Top 100'],
+    'ICPUSDT': ['Compute', 'Top 30'],
+    'GRTUSDT': ['Indexing', 'Top 50'],
+    'QNTUSDT': ['Interoperability', 'Enterprise', 'Top 50'],
+    
+    # Exchange tokens
+    'BNBUSDT': ['Exchange', 'Binance', 'Top 10'],
+    
+    # Privacy
+    'XMRUSDT': ['Privacy', 'Top 50'],
+    'ZECUSDT': ['Privacy', 'Top 100'],
+}
+
+
+def get_sector_tags(symbol: str) -> list[str]:
+    """Get sector tags for a symbol."""
+    return SECTOR_TAGS.get(symbol, [])
 
 
 def calculate_signal_score(

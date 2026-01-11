@@ -129,3 +129,138 @@ a{color:inherit}
 .footer{padding:10px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:space-between;color:var(--muted)}
 .star{cursor:pointer;opacity:.6}
 .star.active{opacity:1;color:gold}
+
+/* Reconnection Banner */
+.reconnect-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  background: linear-gradient(90deg, #f59e0b 0%, #d97706 100%);
+  color: #000;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  font-weight: 600;
+  font-size: 14px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+.reconnect-icon {
+  animation: pulse 1.5s infinite;
+}
+
+.reconnect-hint {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Skeleton Loader */
+.skeleton-loader {
+  background: linear-gradient(90deg, #1a1a2e 25%, #252542 50%, #1a1a2e 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Toast Notifications */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  color: #fff;
+  padding: 12px 20px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  z-index: 10001;
+  animation: slideIn 0.3s ease;
+  font-weight: 500;
+}
+
+.toast-success { background: #10b981; }
+.toast-error { background: #ef4444; }
+.toast-info { background: #3b82f6; }
+
+@keyframes slideIn {
+  from {
+    transform: translateY(100px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Mobile Navigation */
+.mobile-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(to top, rgba(10,10,20,0.98) 0%, rgba(10,10,20,0.95) 100%);
+  border-top: 1px solid rgba(255,255,255,0.1);
+  display: none;
+  justify-content: space-around;
+  align-items: center;
+  padding: 8px 0 max(12px, env(safe-area-inset-bottom));
+  z-index: 9998;
+  backdrop-filter: blur(10px);
+}
+
+.mobile-nav a {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-decoration: none;
+  color: #888;
+  font-size: 10px;
+  font-weight: 600;
+  gap: 2px;
+  transition: color 0.2s;
+}
+
+.mobile-nav a:hover, .mobile-nav a.active {
+  color: #3b82f6;
+}
+
+.mobile-nav a span.icon {
+  font-size: 20px;
+}
+
+@media (max-width: 768px) {
+  .mobile-nav {
+    display: flex !important;
+  }
+  
+  .container {
+    padding-bottom: 75px !important;
+  }
+  
+  .toolbar a[href="/alerts"],
+  .toolbar a[href="/portfolio"],
+  .toolbar a[href="/feed"],
+  .toolbar a[href="/analysis"],
+  .toolbar a[href="/about"] {
+    display: none !important;
+  }
+  
+  .toolbar .button {
+    padding: 6px 10px !important;
+    font-size: 11px !important;
+  }
+}

@@ -61,6 +61,26 @@ type Metric = {
   stoch_k?: number | null;
   stoch_d?: number | null;
   
+  // Money Flow Index (Cipher B style) - Multiple Timeframes
+  mfi_1h?: number | null;
+  mfi_15m?: number | null;
+  mfi_4h?: number | null;
+  
+  // Multi-Timeframe Confluence
+  mtf_bull_count?: number | null;
+  mtf_bear_count?: number | null;
+  mtf_summary?: string | null;
+  
+  // Volatility Analysis
+  volatility_percentile?: number | null;
+  
+  // Time Since Signal
+  cipher_signal_age_ms?: number | null;
+  percent_r_signal_age_ms?: number | null;
+  
+  // Sector Tags
+  sector_tags?: string[] | null;
+  
   // Funding Rate
   funding_rate?: number | null;
   funding_rate_annual?: number | null;
@@ -138,6 +158,11 @@ export default function Home() {
   const [showAlerts, setShowAlerts] = useState<boolean>(false);
   const [alertLog, setAlertLog] = useState<{ts:number; text:string}[]>([]);
   const [pendingSnapshot, setPendingSnapshot] = useState<Snapshot | null>(null);
+  
+  // UX Fixes: Real-time modal updates and position tracking
+  const [liveModalData, setLiveModalData] = useState<Metric | null>(null);
+  const [openPositions, setOpenPositions] = useState<string[]>([]);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
   // Avoid SSR/CSR hydration mismatches by resolving host-based URLs client-side
   const [resolvedBackendHttp, setResolvedBackendHttp] = useState<string>(process.env.NEXT_PUBLIC_BACKEND_HTTP || '');
@@ -271,6 +296,8 @@ export default function Home() {
   // Quick add to portfolio
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [quickAddSymbol, setQuickAddSymbol] = useState<Metric | null>(null);
+  // UI state
+  const [topMoversCollapsed, setTopMoversCollapsed] = useState(false);
   const [quickAddForm, setQuickAddForm] = useState({
     side: 'LONG' as 'LONG' | 'SHORT',
     quantity: '',
@@ -353,6 +380,64 @@ export default function Home() {
     return () => clearInterval(throttleTimer);
   }, [pendingSnapshot]);
 
+  // WebSocket reconnection banner state
+  const [isReconnecting, setIsReconnecting] = useState(false);
+  const [reconnectAttempt, setReconnectAttempt] = useState(0);
+
+  // UX Fix: Real-time modal updates
+  useEffect(() => {
+    if (!modal.open || !modal.row) {
+      setLiveModalData(null);
+      return;
+    }
+
+    // Find updates in the rows array
+    const updateInterval = setInterval(() => {
+      const updated = rows.find(
+        (r) => r.symbol === modal.row?.symbol && r.exchange === modal.row?.exchange
+      );
+      if (updated) {
+        setLiveModalData(updated);
+        // Also update the modal state to keep other data in sync
+        setModal((m) => ({
+          ...m,
+          row: updated,
+        }));
+      }
+    }, 1000); // Check every second
+
+    return () => clearInterval(updateInterval);
+  }, [modal.open, modal.row, rows]);
+
+  // UX Fix: Load open positions for indicator badges
+  useEffect(() => {
+    const loadPositions = async () => {
+      if (!resolvedBackendHttp) return;
+      
+      try {
+        const resp = await fetch(`${resolvedBackendHttp}/portfolio/positions`);
+        if (resp.ok) {
+          const data = await resp.json();
+          const symbols = (data.positions || []).map(
+            (p: any) => `${p.exchange}:${p.symbol}`
+          );
+          setOpenPositions(symbols);
+        }
+      } catch (e) {
+        // Silent fail - not critical
+        console.debug('Failed to load positions:', e);
+      }
+    };
+
+    if (resolvedBackendHttp) {
+      loadPositions();
+      const interval = setInterval(loadPositions, 10000); // Refresh every 10s
+      return () => clearInterval(interval);
+    }
+  }, [resolvedBackendHttp]);
+
+  // UX Fix: Keyboard shortcuts (moved after sorted is defined below)
+
   useEffect(() => {
     const url = resolvedWsUrl || 'ws://localhost:8000/ws/screener';
     const backendHttp = resolvedBackendHttp || 'http://127.0.0.1:8000';
@@ -405,16 +490,16 @@ export default function Home() {
         }
       } catch {}
 
-      // sentiment (4h) - best effort
+      // sentiment (4h) - best effort - use combined endpoint for efficiency
       try {
-        const [allResp, bResp, yResp] = await Promise.all([
-          fetch(backendHttp + '/meta/sentiment'),
-          fetch(backendHttp + '/meta/sentiment?exchange=binance'),
-          fetch(backendHttp + '/meta/sentiment?exchange=bybit'),
-        ]);
-        if (allResp.ok) setSentiment(await allResp.json());
-        if (bResp.ok) setSentimentBinance(await bResp.json());
-        if (yResp.ok) setSentimentBybit(await yResp.json());
+        const sentimentResp = await fetch(backendHttp + '/meta/sentiment/all');
+        if (sentimentResp.ok) {
+          const data = await sentimentResp.json();
+          // Map combined response to individual state format
+          if (data.all) setSentiment({ ...data.all, exchange: 'all', window_minutes: data.window_minutes, since_ts: data.since_ts });
+          if (data.binance) setSentimentBinance({ ...data.binance, exchange: 'binance', window_minutes: data.window_minutes, since_ts: data.since_ts });
+          if (data.bybit) setSentimentBybit({ ...data.bybit, exchange: 'bybit', window_minutes: data.window_minutes, since_ts: data.since_ts });
+        }
       } catch {}
     }
 
@@ -445,6 +530,8 @@ export default function Home() {
           attempt = 0;
           failCount = 0;
           setStatus('connected');
+          setIsReconnecting(false);
+          setReconnectAttempt(0);
 
           ws.onmessage = (ev) => {
             try {
@@ -486,7 +573,9 @@ export default function Home() {
           failCount += 1;
         } catch {
           setStatus('disconnected');
+          setIsReconnecting(true);
           failCount += 1;
+          setReconnectAttempt(failCount);
         }
 
         // If WS repeatedly fails, fall back to HTTP polling.
@@ -577,6 +666,72 @@ export default function Home() {
     return [...filtered].sort(cmp);
   }, [filtered, sortKey, sortDir, preset]);
 
+  // UX Fix: Keyboard shortcuts (placed after sorted is defined)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if user is typing in an input/textarea
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+        // Allow ESC to close modal even when in input
+        if (e.key !== 'Escape') return;
+      }
+
+      // ESC - Close modal
+      if (e.key === 'Escape') {
+        if (modal.open) {
+          setModal({ open: false });
+        } else if (showQuickAdd) {
+          setShowQuickAdd(false);
+        } else if (showAlerts) {
+          setShowAlerts(false);
+        }
+        return;
+      }
+
+      // / - Focus search (when nothing is open)
+      if (e.key === '/' && !modal.open && !showQuickAdd) {
+        e.preventDefault();
+        const searchInput = document.querySelector<HTMLInputElement>(
+          '.input[placeholder*="Search"]'
+        );
+        if (searchInput) {
+          searchInput.focus();
+          searchInput.select();
+        }
+        return;
+      }
+
+      // Arrow keys - Navigate between symbols in modal
+      if (modal.open && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        e.preventDefault();
+        const direction = e.key === 'ArrowLeft' ? -1 : 1;
+        const i = sorted.findIndex((x) => idOf(x) === idOf(modal.row!));
+        if (i >= 0) {
+          const next = sorted[(i + direction + sorted.length) % sorted.length];
+          openDetails(next);
+        }
+        return;
+      }
+
+      // ? - Show keyboard shortcuts help
+      if (e.key === '?' && !modal.open) {
+        e.preventDefault();
+        const helpText = 
+          '⌨️ KEYBOARD SHORTCUTS\n\n' +
+          'ESC          Close modal/dialog\n' +
+          '/            Focus search box\n' +
+          '← →          Navigate symbols (in modal)\n' +
+          '?            Show this help';
+        
+        alert(helpText);
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [modal, sorted, showQuickAdd, showAlerts]);
+
   // Top movers (based on full universe, not filtered)
   const movers5mUp = useMemo(() => topMovers(rows, 'change_5m', 'up'), [rows]);
   const movers5mDown = useMemo(() => topMovers(rows, 'change_5m', 'down'), [rows]);
@@ -591,45 +746,36 @@ export default function Home() {
       process.env.NEXT_PUBLIC_BACKEND_HTTP ||
       (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}:8000` : 'http://127.0.0.1:8000');
 
-    // Show modal immediately with row data; load history + plan + backtests + news async
+    // Show modal immediately with row data; load all details via combined endpoint
     setModal({ open: true, row: r, closes: [], oi: [], loading: true, plan: null, bt30: null, bt90: null, news: [], newsLoading: true, fundingRate: null, fundingRateAnnual: null, nextFundingTime: null, fundingLoading: true });
 
     try {
-      const [histResp, oiResp, planResp, bt30Resp, bt90Resp, newsResp, fundingResp] = await Promise.all([
-        fetch(`${backendBase}/debug/history?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&limit=60`),
-        fetch(`${backendBase}/debug/oi_history?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&limit=60`),
-        fetch(`${backendBase}/meta/trade_plan?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}`),
-        fetch(`${backendBase}/meta/backtest?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&window_days=30`),
-        fetch(`${backendBase}/meta/backtest?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}&window_days=90`),
-        fetch(`${backendBase}/news/${encodeURIComponent(exchange)}/${encodeURIComponent(r.symbol)}`),
-        fetch(`${backendBase}/funding_rate/${encodeURIComponent(exchange)}/${encodeURIComponent(r.symbol)}`),
-      ]);
-      const j = histResp.ok ? await histResp.json() : { closes: [] };
-      const o = oiResp.ok ? await oiResp.json() : { oi: [] };
-      const p = planResp.ok ? await planResp.json() : { plan: null };
-      const b30 = bt30Resp.ok ? await bt30Resp.json() : null;
-      const b90 = bt90Resp.ok ? await bt90Resp.json() : null;
-      const n = newsResp.ok ? await newsResp.json() : { articles: [] };
-      const f = fundingResp.ok ? await fundingResp.json() : { error: 'Failed' };
-      setModal((m) => ({
-        ...m,
-        open: true,
-        row: r,
-        closes: j.closes || [],
-        oi: o.oi || [],
-        plan: p.plan || null,
-        bt30: b30 && b30.result ? ({ window_days: 30, ...b30 } as any) : null,
-        bt90: b90 && b90.result ? ({ window_days: 90, ...b90 } as any) : null,
-        news: n.articles || [],
-        newsLoading: false,
-        loading: false,
-        fundingRate: f.error ? null : f.funding_rate,
-        fundingRateAnnual: f.error ? null : f.funding_rate_annual,
-        nextFundingTime: f.error ? null : f.next_funding_time,
-        fundingLoading: false,
-      }));
+      // Use combined endpoint - reduces 7 API calls to 1
+      const resp = await fetch(`${backendBase}/symbol/details?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        setModal((m) => ({
+          ...m,
+          open: true,
+          row: r,
+          closes: data.closes || [],
+          oi: data.oi || [],
+          plan: data.plan || null,
+          bt30: data.bt30 && data.bt30.result ? ({ window_days: 30, ...data.bt30 } as any) : null,
+          bt90: data.bt90 && data.bt90.result ? ({ window_days: 90, ...data.bt90 } as any) : null,
+          news: data.news || [],
+          newsLoading: false,
+          loading: false,
+          fundingRate: data.funding?.funding_rate ?? null,
+          fundingRateAnnual: data.funding?.funding_rate_annual ?? null,
+          nextFundingTime: data.funding?.next_funding_time ?? null,
+          fundingLoading: false,
+        }));
+      } else {
+        throw new Error('Failed to fetch details');
+      }
     } catch (e) {
-      setModal((m) => ({ ...m, open: true, row: r, closes: [], oi: [], news: [], newsLoading: false, loading: false }));
+      setModal((m) => ({ ...m, open: true, row: r, closes: [], oi: [], news: [], newsLoading: false, loading: false, fundingLoading: false }));
     }
   };
 
@@ -683,7 +829,20 @@ export default function Home() {
 
   return (
     <div className="container">
-      <div className="panel">
+      {/* Reconnection Banner */}
+      {(isReconnecting || status === 'disconnected') && (
+        <div className="reconnect-banner">
+          <span className="reconnect-icon">⚠️</span>
+          <span>
+            {status === 'connecting' 
+              ? `Reconnecting to server${reconnectAttempt > 0 ? ` (attempt ${reconnectAttempt})` : ''}...`
+              : 'Connection lost. Attempting to reconnect...'}
+          </span>
+          <span className="reconnect-hint">Data may be stale</span>
+        </div>
+      )}
+      
+      <div className="panel" style={{ marginTop: (isReconnecting || status === 'disconnected') ? 44 : 0 }}>
         <div className="toolbar">
           <div className="group" style={{ flexWrap: 'wrap' }}>
             <span className="badge">Exchange: Binance Perp</span>
@@ -834,6 +993,39 @@ export default function Home() {
             <button className={"button "+(showColumns? 'buttonActive':'')} onClick={()=>setShowColumns(v=>!v)} title="Choose table columns">
               Columns
             </button>
+            <button 
+              className="button" 
+              onClick={() => {
+                // Export to CSV
+                const headers = ['Symbol', 'Exchange', 'Price', '5m%', '15m%', '60m%', 'Signal', 'Impulse', 'OI', 'ATR', 'Market Cap'];
+                const csvRows = [headers.join(',')];
+                sorted.forEach(r => {
+                  csvRows.push([
+                    r.symbol,
+                    r.exchange || 'binance',
+                    r.last_price?.toFixed(4) || '',
+                    ((r.change_5m || 0) * 100).toFixed(2) + '%',
+                    ((r.change_15m || 0) * 100).toFixed(2) + '%',
+                    ((r.change_60m || 0) * 100).toFixed(2) + '%',
+                    r.signal_score?.toFixed(0) || '',
+                    r.impulse_score?.toFixed(0) || '',
+                    r.open_interest?.toFixed(0) || '',
+                    r.atr?.toFixed(4) || '',
+                    r.market_cap?.toFixed(0) || ''
+                  ].join(','));
+                });
+                const blob = new Blob([csvRows.join('\n')], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `crypto_screener_${new Date().toISOString().slice(0,10)}.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              title="Export current view to CSV"
+            >
+              Export CSV
+            </button>
           </div>
         </div>
 
@@ -885,8 +1077,19 @@ export default function Home() {
           </div>
         )}
 
-        {/* Top movers grid */}
+        {/* Top movers grid - collapsible */}
         <div style={{padding:12}}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <button 
+              className="button" 
+              onClick={() => setTopMoversCollapsed(!topMoversCollapsed)}
+              style={{ padding: '4px 10px', fontSize: 12 }}
+            >
+              {topMoversCollapsed ? '▶ Show' : '▼ Hide'} Top Movers
+            </button>
+            {topMoversCollapsed && <span className="muted" style={{ fontSize: 12 }}>Click to expand movers panel</span>}
+          </div>
+          {!topMoversCollapsed && (
           <div className="grid">
             <div className="card">
               <h3>Top Gainers 5m</h3>
@@ -933,6 +1136,7 @@ export default function Home() {
               </div>
             </div>
           </div>
+          )}
         </div>
 
         {/* Pinned favorites */}
@@ -1068,7 +1272,28 @@ export default function Home() {
                   <td className="muted">
                     <span className={"star "+(favs.includes(idOf(r))?'active':'')} onClick={(e)=>{e.stopPropagation(); toggleFav(idOf(r), favs, setFavs)}}>★</span>
                   </td>
-                  <td style={{fontWeight:600}}>{r.symbol}</td>
+                  <td style={{fontWeight:600}}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+                      {r.symbol}
+                      {openPositions.includes(idOf(r)) && (
+                        <span 
+                          className="badge" 
+                          style={{
+                            fontSize: 9,
+                            background: '#3b82f6',
+                            padding: '2px 5px',
+                            fontWeight: 700,
+                            color: '#fff',
+                            borderRadius: 3,
+                            flexShrink: 0
+                          }}
+                          title="You have an open position"
+                        >
+                          OPEN
+                        </span>
+                      )}
+                    </span>
+                  </td>
                   {col('exchange') && <td className="muted hide-xs">{r.exchange || 'binance'}</td>}
                   {col('signal') && (
                     <td className={signalClass(r.signal_strength)}>
@@ -1146,7 +1371,7 @@ export default function Home() {
 
       {modal.open && modal.row && (
         <DetailsModal
-          row={modal.row}
+          row={liveModalData || modal.row}
           closes={modal.closes || []}
           oi={modal.oi || []}
           loading={!!modal.loading}
@@ -1174,6 +1399,7 @@ export default function Home() {
             }
           }}
           backendWs={resolvedWsUrl}
+          backendHttp={resolvedBackendHttp}
         />
       )}
 
@@ -1376,6 +1602,7 @@ function DetailsModal({
   onNavigate,
   onQuickAddToPortfolio,
   backendWs,
+  backendHttp,
 }: {
   row: Metric;
   closes: number[];
@@ -1396,7 +1623,9 @@ function DetailsModal({
   onNavigate: (dir: -1 | 1) => void;
   onQuickAddToPortfolio?: () => void;
   backendWs: string;
+  backendHttp: string;
 }) {
+  
   const [activeTab, setActiveTab] = useState<'overview' | 'plan' | 'indicators' | 'news'>('overview');
   const exchange = row.exchange || 'binance';
   const symbol = row.symbol;
@@ -1482,13 +1711,14 @@ function DetailsModal({
   };
 
   return (
-    <div className="modalOverlay" onClick={onClose} style={{ padding: '0', alignItems: 'stretch', overflow: 'hidden' }}>
+    <div className="modalOverlay" onClick={onClose} style={{ padding: '20px', alignItems: 'center', overflow: 'auto' }}>
       <div className="panel modalSheet" onClick={(e) => e.stopPropagation()} style={{ 
         width: '100%', 
-        maxWidth: '100vw',
-        height: '100vh',
-        margin: '0',
-        borderRadius: '0',
+        maxWidth: '1200px',
+        height: 'auto',
+        maxHeight: '90vh',
+        margin: '0 auto',
+        borderRadius: '12px',
         overflowX: 'hidden',
         overflowY: 'auto',
         boxSizing: 'border-box'
@@ -2118,6 +2348,187 @@ function DetailsModal({
                 <div className="muted" style={{ fontSize: 11, marginTop: 16, padding: 12, background: 'rgba(0,0,0,0.2)', borderRadius: 4 }}>
                   ℹ️ All indicators are calculated on 15m closed candles for more stable signals. Indicators may show "Not enough data" until sufficient 15m candles have been collected (~6 hours for full indicator set).
                 </div>
+                
+                {/* Advanced Metrics Section */}
+                <div style={{ marginTop: 24 }}>
+                  <h4 style={{ margin: '0 0 16px 0', fontSize: 14, borderBottom: '1px solid var(--border)', paddingBottom: 8 }}>📊 Advanced Metrics</h4>
+                  
+                  {/* Money Flow Index - Multi Timeframe */}
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>Money Flow Index (MFI) - Cipher B Style</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                      {/* 1h MFI */}
+                      <div style={{ background: 'rgba(0,0,0,0.2)', padding: 10, borderRadius: 6, textAlign: 'center' }}>
+                        <div style={{ fontSize: 10, color: '#666', marginBottom: 4 }}>1H</div>
+                        {row.mfi_1h !== null && row.mfi_1h !== undefined ? (
+                          <>
+                            <div style={{ 
+                              fontSize: 16, 
+                              fontWeight: 700, 
+                              color: row.mfi_1h > 20 ? '#10b981' : row.mfi_1h < -20 ? '#ef4444' : '#888' 
+                            }}>
+                              {row.mfi_1h > 0 ? '+' : ''}{row.mfi_1h.toFixed(1)}
+                            </div>
+                            <div style={{ fontSize: 9, color: '#666', marginTop: 2 }}>
+                              {row.mfi_1h > 20 ? '🟢 Buying' : row.mfi_1h < -20 ? '🔴 Selling' : '⚪ Neutral'}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="muted" style={{ fontSize: 11 }}>-</div>
+                        )}
+                      </div>
+                      
+                      {/* 15m MFI */}
+                      <div style={{ background: 'rgba(0,0,0,0.2)', padding: 10, borderRadius: 6, textAlign: 'center' }}>
+                        <div style={{ fontSize: 10, color: '#666', marginBottom: 4 }}>15M</div>
+                        {row.mfi_15m !== null && row.mfi_15m !== undefined ? (
+                          <>
+                            <div style={{ 
+                              fontSize: 16, 
+                              fontWeight: 700, 
+                              color: row.mfi_15m > 20 ? '#10b981' : row.mfi_15m < -20 ? '#ef4444' : '#888' 
+                            }}>
+                              {row.mfi_15m > 0 ? '+' : ''}{row.mfi_15m.toFixed(1)}
+                            </div>
+                            <div style={{ fontSize: 9, color: '#666', marginTop: 2 }}>
+                              {row.mfi_15m > 20 ? '🟢 Buying' : row.mfi_15m < -20 ? '🔴 Selling' : '⚪ Neutral'}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="muted" style={{ fontSize: 11 }}>Need data</div>
+                        )}
+                      </div>
+                      
+                      {/* 4h MFI */}
+                      <div style={{ background: 'rgba(0,0,0,0.2)', padding: 10, borderRadius: 6, textAlign: 'center' }}>
+                        <div style={{ fontSize: 10, color: '#666', marginBottom: 4 }}>4H</div>
+                        {row.mfi_4h !== null && row.mfi_4h !== undefined ? (
+                          <>
+                            <div style={{ 
+                              fontSize: 16, 
+                              fontWeight: 700, 
+                              color: row.mfi_4h > 20 ? '#10b981' : row.mfi_4h < -20 ? '#ef4444' : '#888' 
+                            }}>
+                              {row.mfi_4h > 0 ? '+' : ''}{row.mfi_4h.toFixed(1)}
+                            </div>
+                            <div style={{ fontSize: 9, color: '#666', marginTop: 2 }}>
+                              {row.mfi_4h > 20 ? '🟢 Buying' : row.mfi_4h < -20 ? '🔴 Selling' : '⚪ Neutral'}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="muted" style={{ fontSize: 11 }}>Need data</div>
+                        )}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 9, color: '#555', marginTop: 6, textAlign: 'center' }}>
+                      MFI shows buying/selling pressure based on where price closes within the candle range
+                    </div>
+                  </div>
+                  
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+                    
+                    {/* MTF Confluence */}
+                    <div style={{ background: 'rgba(0,0,0,0.2)', padding: 12, borderRadius: 6 }}>
+                      <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>MTF Confluence <span style={{ color: '#555' }}>(1m/15m/4h)</span></div>
+                      {row.mtf_summary ? (
+                        <>
+                          <div style={{ 
+                            fontSize: 14, 
+                            fontWeight: 700, 
+                            color: (row.mtf_bull_count || 0) > (row.mtf_bear_count || 0) ? '#10b981' : (row.mtf_bear_count || 0) > (row.mtf_bull_count || 0) ? '#ef4444' : '#888'
+                          }}>
+                            {row.mtf_summary}
+                          </div>
+                          <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>
+                            {(row.mtf_bull_count || 0) >= 4 ? '✅ Strong bullish' : (row.mtf_bear_count || 0) >= 4 ? '⚠️ Strong bearish' : 'Mixed signals'}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="muted">Calculating...</div>
+                      )}
+                    </div>
+                    
+                    {/* Volatility Percentile */}
+                    <div style={{ background: 'rgba(0,0,0,0.2)', padding: 12, borderRadius: 6 }}>
+                      <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>Volatility Percentile <span style={{ color: '#555' }}>(1m ATR)</span></div>
+                      {row.volatility_percentile !== null && row.volatility_percentile !== undefined ? (
+                        <>
+                          <div style={{ 
+                            fontSize: 18, 
+                            fontWeight: 700, 
+                            color: row.volatility_percentile > 80 ? '#f59e0b' : row.volatility_percentile < 20 ? '#3b82f6' : '#888'
+                          }}>
+                            {row.volatility_percentile.toFixed(0)}%
+                          </div>
+                          <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>
+                            {row.volatility_percentile > 80 ? '🔥 High vol' : row.volatility_percentile < 20 ? '💤 Low vol' : '📊 Normal'}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="muted">Need data...</div>
+                      )}
+                    </div>
+                    
+                    {/* Time Since Signal */}
+                    <div style={{ background: 'rgba(0,0,0,0.2)', padding: 12, borderRadius: 6 }}>
+                      <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>Signal Age</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                          <span>Cipher B:</span>
+                          <span style={{ 
+                            fontWeight: 600, 
+                            color: row.cipher_signal_age_ms && row.cipher_signal_age_ms < 300000 ? '#10b981' : '#888'
+                          }}>
+                            {row.cipher_signal_age_ms ? (
+                              row.cipher_signal_age_ms < 60000 ? `${Math.floor(row.cipher_signal_age_ms / 1000)}s` :
+                              row.cipher_signal_age_ms < 3600000 ? `${Math.floor(row.cipher_signal_age_ms / 60000)}m` :
+                              `${Math.floor(row.cipher_signal_age_ms / 3600000)}h`
+                            ) : '-'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                          <span>%R:</span>
+                          <span style={{ 
+                            fontWeight: 600, 
+                            color: row.percent_r_signal_age_ms && row.percent_r_signal_age_ms < 300000 ? '#10b981' : '#888'
+                          }}>
+                            {row.percent_r_signal_age_ms ? (
+                              row.percent_r_signal_age_ms < 60000 ? `${Math.floor(row.percent_r_signal_age_ms / 1000)}s` :
+                              row.percent_r_signal_age_ms < 3600000 ? `${Math.floor(row.percent_r_signal_age_ms / 60000)}m` :
+                              `${Math.floor(row.percent_r_signal_age_ms / 3600000)}h`
+                            ) : '-'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    
+                  </div>
+                  
+                  {/* Sector Tags */}
+                  {row.sector_tags && row.sector_tags.length > 0 && (
+                    <div style={{ marginTop: 16 }}>
+                      <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>Sector Tags</div>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {row.sector_tags.map((tag: string, i: number) => (
+                          <span 
+                            key={i}
+                            style={{ 
+                              padding: '3px 8px', 
+                              background: tag.includes('Top 10') ? 'rgba(16, 185, 129, 0.2)' : tag.includes('Top 20') ? 'rgba(59, 130, 246, 0.2)' : 'rgba(255,255,255,0.1)', 
+                              borderRadius: 4, 
+                              fontSize: 10, 
+                              fontWeight: 600,
+                              color: tag.includes('Top') ? '#fff' : '#aaa'
+                            }}
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                </div>
               </div>
             )}
 
@@ -2299,4 +2710,35 @@ function fmtSignal(score?: number | null, strength?: string | null) {
   
   const sign = score > 0 ? '+' : '';
   return `${emoji} ${sign}${score.toFixed(0)}`;
+}
+
+// Utility Components for UX Fixes
+
+function SkeletonLoader({ width = '100%', height = 20 }: { width?: string | number; height?: number }) {
+  return (
+    <div 
+      className="skeleton-loader"
+      style={{ 
+        width,
+        height,
+      }}
+    />
+  );
+}
+
+function Toast({ message, type = 'success', onClose }: { 
+  message: string; 
+  type?: 'success' | 'error' | 'info';
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const timer = setTimeout(onClose, 3000);
+    return () => clearTimeout(timer);
+  }, [onClose]);
+
+  return (
+    <div className={`toast toast-${type}`}>
+      {message}
+    </div>
+  );
 }

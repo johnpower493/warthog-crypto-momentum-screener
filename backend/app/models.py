@@ -91,6 +91,26 @@ class SymbolMetrics(BaseModel):
     stoch_k: Optional[float] = None  # Stochastic RSI %K (0 to 100)
     stoch_d: Optional[float] = None  # Stochastic RSI %D (0 to 100)
     
+    # Money Flow Index (Cipher B style) - Multiple Timeframes
+    mfi_1h: Optional[float] = None  # MFI on 1m data, 60 period (1 hour lookback)
+    mfi_15m: Optional[float] = None  # MFI on 15m data, 60 period
+    mfi_4h: Optional[float] = None  # MFI on 4h data, 60 period
+    
+    # Multi-Timeframe Confluence
+    mtf_bull_count: Optional[int] = None  # How many TFs are bullish (0-5)
+    mtf_bear_count: Optional[int] = None  # How many TFs are bearish (0-5)
+    mtf_summary: Optional[str] = None  # "4/5 Bullish", "3/5 Bearish", etc.
+    
+    # Volatility Analysis
+    volatility_percentile: Optional[float] = None  # 0-100 percentile vs last 30 periods
+    
+    # Time Since Signal
+    cipher_signal_age_ms: Optional[int] = None  # Time since last cipher signal (ms)
+    percent_r_signal_age_ms: Optional[int] = None  # Time since last %R signal (ms)
+    
+    # Sector Tags
+    sector_tags: Optional[List[str]] = None  # ["L1", "DeFi", "Top 20"]
+    
     # Funding Rate (Perpetual Futures)
     funding_rate: Optional[float] = None  # Current funding rate (e.g., 0.0001 = 0.01%)
     funding_rate_annual: Optional[float] = None  # Annualized funding rate (%)

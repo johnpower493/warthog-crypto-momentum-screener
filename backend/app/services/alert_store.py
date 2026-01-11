@@ -1,8 +1,13 @@
 from __future__ import annotations
 import json
+import time
 from typing import Optional, Dict, Any, List, Tuple
 
 from .ohlc_store import init_db, get_conn, _DB_LOCK  # type: ignore
+
+# Simple in-memory cache for recent alerts (feed page)
+_alerts_cache: Dict[str, tuple[float, List[Dict[str, Any]]]] = {}
+_ALERTS_CACHE_TTL_SEC = 5.0  # 5 second cache for feed page
 
 
 def insert_alert(
@@ -96,6 +101,16 @@ def get_recent_alerts(
     source_tf: Optional[str] = None,
     min_grade: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
+    # Build cache key from params
+    cache_key = f"{exchange}:{limit}:{since_ts}:{signal}:{source_tf}:{min_grade}"
+    now = time.time()
+    
+    # Check cache first
+    if cache_key in _alerts_cache:
+        cached_ts, cached_data = _alerts_cache[cache_key]
+        if now - cached_ts < _ALERTS_CACHE_TTL_SEC:
+            return cached_data
+    
     conn = get_conn()
     where = []
     params: list[Any] = []
@@ -136,7 +151,6 @@ def get_recent_alerts(
         cur = conn.execute(q, tuple(params))
         rows = cur.fetchall()
     out = []
-    import json
     for r in rows:
         avoid = None
         try:
@@ -157,6 +171,16 @@ def get_recent_alerts(
             "setup_grade": r[10],
             "avoid_reasons": avoid,
         })
+    
+    # Cache the result
+    _alerts_cache[cache_key] = (now, out)
+    
+    # Clean old cache entries (keep cache size bounded)
+    if len(_alerts_cache) > 100:
+        oldest_keys = sorted(_alerts_cache.keys(), key=lambda k: _alerts_cache[k][0])[:50]
+        for k in oldest_keys:
+            _alerts_cache.pop(k, None)
+    
     return out
 
 
