@@ -137,6 +137,7 @@ export default function Home() {
   const [rows, setRows] = useState<Metric[]>([]);
   const [showAlerts, setShowAlerts] = useState<boolean>(false);
   const [alertLog, setAlertLog] = useState<{ts:number; text:string}[]>([]);
+  const [pendingSnapshot, setPendingSnapshot] = useState<Snapshot | null>(null);
 
   // Avoid SSR/CSR hydration mismatches by resolving host-based URLs client-side
   const [resolvedBackendHttp, setResolvedBackendHttp] = useState<string>(process.env.NEXT_PUBLIC_BACKEND_HTTP || '');
@@ -339,6 +340,19 @@ export default function Home() {
     try { localStorage.setItem('favs', JSON.stringify(favs)); } catch {}
   }, [favs]);
 
+  // Throttle UI updates to prevent render lag
+  useEffect(() => {
+    const throttleTimer = setInterval(() => {
+      if (pendingSnapshot) {
+        setRows(pendingSnapshot.metrics);
+        setLastUpdate(Date.now());
+        setPendingSnapshot(null);
+      }
+    }, 500); // Update UI max 2 times per second
+    
+    return () => clearInterval(throttleTimer);
+  }, [pendingSnapshot]);
+
   useEffect(() => {
     const url = resolvedWsUrl || 'ws://localhost:8000/ws/screener';
     const backendHttp = resolvedBackendHttp || 'http://127.0.0.1:8000';
@@ -367,8 +381,8 @@ export default function Home() {
           const map = httpState.current;
           map.clear();
           for (const m of s.metrics || []) map.set(`${(m.exchange || 'binance')}:${m.symbol}`, m);
-          setRows(Array.from(map.values()));
-          setLastUpdate(Date.now());
+          // Use throttled update for HTTP polling too
+          setPendingSnapshot({ exchange: s.exchange, ts: s.ts, metrics: Array.from(map.values()) });
         } catch {}
       };
       poll();
@@ -437,9 +451,11 @@ export default function Home() {
               const snap: Snapshot | { type: string } = JSON.parse(ev.data);
               if ((snap as any).type === 'ping') return;
               const s = snap as Snapshot;
-              setRows(s.metrics);
-              setLastUpdate(Date.now());
-              // Append any fresh cipher signals to alert log
+              
+              // Use throttled update instead of immediate setState
+              setPendingSnapshot(s);
+              
+              // Append any fresh cipher signals to alert log (still immediate)
               const newAlerts: {ts:number; text:string}[] = [];
               for (const m of s.metrics) {
                 // Cipher B signals

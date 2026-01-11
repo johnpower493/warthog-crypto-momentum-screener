@@ -319,6 +319,50 @@ def get_recent(
     return rows
 
 
+def get_recent_batch(
+    exchange: str,
+    symbols: List[str],
+    interval: str,
+    limit: int = 300,
+) -> Dict[str, List[Tuple[int,int,float,float,float,float,float]]]:
+    """Fetch OHLC data for multiple symbols in one query.
+    
+    Returns: Dict mapping symbol -> list of (open_time, close_time, o, h, l, c, v) tuples
+    """
+    if _CONN is None:
+        init_db()
+    
+    if not symbols:
+        return {}
+    
+    with _DB_LOCK:
+        # Use subquery to limit rows per symbol
+        placeholders = ','.join('?' * len(symbols))
+        query = f"""
+            SELECT symbol, open_time, close_time, open, high, low, close, volume
+            FROM (
+                SELECT *, ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY open_time DESC) as rn
+                FROM ohlc
+                WHERE exchange=? AND symbol IN ({placeholders}) AND interval=?
+            ) 
+            WHERE rn <= ?
+            ORDER BY symbol, open_time ASC
+        """
+        cur = _CONN.execute(query, (exchange, *symbols, interval, limit))
+        rows = cur.fetchall()
+    
+    # Group by symbol
+    result: Dict[str, List[Tuple[int,int,float,float,float,float,float]]] = {}
+    for row in rows:
+        sym = row[0]
+        data = row[1:]  # (open_time, close_time, o, h, l, c, v)
+        if sym not in result:
+            result[sym] = []
+        result[sym].append(data)
+    
+    return result
+
+
 def get_after(
     exchange: str,
     symbol: str,

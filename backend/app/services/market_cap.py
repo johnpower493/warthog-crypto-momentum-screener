@@ -184,19 +184,37 @@ class MarketCapProvider:
         # Initialize DB
         self._init_db()
         
-        # Try to load from database first
+        # Try to load from database first (fast, non-blocking)
         loaded_from_db = self._load_from_db()
         
-        # Fetch CoinGecko ID mappings if not already loaded
-        if not self._symbol_to_coingecko_id:
-            await self._fetch_coingecko_ids()
-        
-        # If DB is empty or stale, fetch fresh data
+        # If DB is empty, schedule background fetch (don't block startup)
         if not loaded_from_db:
-            logger.info("No cached market cap data found, fetching from CoinGecko...")
-            await self._fetch_market_caps()
+            logger.info("No cached market cap data found, fetching from CoinGecko in background...")
+            asyncio.create_task(self._background_initial_fetch())
         else:
             logger.info(f"Using cached market cap data (age: {int(time.time() - self._last_update)}s)")
+            # Schedule background refresh if data is old
+            asyncio.create_task(self._background_refresh_if_needed())
+    
+    async def _background_initial_fetch(self):
+        """Fetch market cap data in background without blocking startup."""
+        try:
+            # Fetch CoinGecko ID mappings if not already loaded
+            if not self._symbol_to_coingecko_id:
+                await self._fetch_coingecko_ids()
+            
+            await self._fetch_market_caps()
+            logger.info("Background market cap fetch completed")
+        except Exception as e:
+            logger.error(f"Background market cap fetch failed: {e}")
+    
+    async def _background_refresh_if_needed(self):
+        """Check if data is stale and refresh in background."""
+        try:
+            await asyncio.sleep(10)  # Wait a bit before checking
+            await self.update_if_needed()
+        except Exception as e:
+            logger.error(f"Background market cap refresh failed: {e}")
     
     async def update_if_needed(self):
         """Update market cap cache if stale."""

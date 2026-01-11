@@ -1,7 +1,8 @@
 from __future__ import annotations
 from collections import deque
-from typing import Deque, Dict, Optional
+from typing import Deque, Dict, Optional, Callable, Any
 import math
+import time
 
 from ..models import Kline, SymbolMetrics
 from ..config import WINDOW_SHORT, WINDOW_MEDIUM, ATR_PERIOD, VOL_LOOKBACK, CIPHERB_OS_LEVEL, CIPHERB_OB_LEVEL
@@ -30,6 +31,11 @@ class SymbolState:
         self.last_price: Optional[float] = None
         self.atr: Optional[float] = None
         self.open_interest: Optional[float] = None
+        
+        # Indicator cache to avoid recalculating expensive indicators
+        # Cache structure: {indicator_key: (timestamp_ms, cached_value)}
+        self._indicator_cache: Dict[str, tuple[int, any]] = {}
+        self._cache_ttl_ms: int = 15000  # 15 seconds (shorter than 15m candle)
 
         # Higher timeframe rolling series (closed candles only)
         maxlen_htf = 400
@@ -51,7 +57,13 @@ class SymbolState:
                 'vol': RollingSeries(maxlen=maxlen_htf),
             }
         }
-        # Seed from DB if available
+        # Indicator cache to avoid recalculating expensive indicators
+        # Cache structure: {indicator_key: (timestamp_ms, cached_value)}
+        self._indicator_cache: Dict[str, tuple[int, Any]] = {}
+        self._cache_ttl_ms: int = 15000  # 15 seconds (shorter than 15m candle)
+        
+        # Seed from DB if available (note: batch loading is done at aggregator level)
+        # Individual symbols can still use get_recent for lazy loading
         try:
             from ..services.ohlc_store import get_recent
             for tf in ['15m', '4h']:
@@ -63,6 +75,21 @@ class SymbolState:
                     self._htf[tf]['vol'].append(v)
         except Exception:
             pass
+    
+    def _get_cached_or_compute(self, cache_key: str, compute_fn: Callable[[], Any]) -> Any:
+        """Get cached value or compute and cache it."""
+        now_ms = int(time.time() * 1000)
+        
+        # Check if we have a valid cached value
+        if cache_key in self._indicator_cache:
+            cached_ts, cached_val = self._indicator_cache[cache_key]
+            if now_ms - cached_ts < self._cache_ttl_ms:
+                return cached_val
+        
+        # Compute new value and cache it
+        new_val = compute_fn()
+        self._indicator_cache[cache_key] = (now_ms, new_val)
+        return new_val
 
     def _resample_htf(self, k: Kline):
         # Only resample on closed 1m candles to avoid intrabar noise
@@ -291,10 +318,26 @@ class SymbolState:
         )
         
         # Technical Indicators (calculated on 15m HTF for more stable signals)
+        # Use caching to avoid expensive recalculations
         closes_15m = list(self._htf['15m']['close'].values)
-        rsi_14_val = rsi(closes_15m, period=14) if len(closes_15m) >= 15 else None
-        macd_val, macd_sig_val, macd_hist_val = macd(closes_15m, fast=12, slow=26, signal=9) if len(closes_15m) >= 35 else (None, None, None)
-        stoch_k_val, stoch_d_val = stochastic_rsi(closes_15m, rsi_period=14, stoch_period=14, k_smooth=3, d_smooth=3) if len(closes_15m) >= 35 else (None, None)
+        
+        # Cache key includes data length to invalidate when new candle arrives
+        cache_suffix = f"_{len(closes_15m)}"
+        
+        rsi_14_val = self._get_cached_or_compute(
+            f"rsi_14{cache_suffix}",
+            lambda: rsi(closes_15m, period=14) if len(closes_15m) >= 15 else None
+        )
+        
+        macd_val, macd_sig_val, macd_hist_val = self._get_cached_or_compute(
+            f"macd{cache_suffix}",
+            lambda: macd(closes_15m, fast=12, slow=26, signal=9) if len(closes_15m) >= 35 else (None, None, None)
+        )
+        
+        stoch_k_val, stoch_d_val = self._get_cached_or_compute(
+            f"stoch_rsi{cache_suffix}",
+            lambda: stochastic_rsi(closes_15m, rsi_period=14, stoch_period=14, k_smooth=3, d_smooth=3) if len(closes_15m) >= 35 else (None, None)
+        )
         
         return SymbolMetrics(
             symbol=self.symbol,

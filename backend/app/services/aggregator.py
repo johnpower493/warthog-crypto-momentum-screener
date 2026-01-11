@@ -34,6 +34,10 @@ class Aggregator:
         self.last_ingest_ts: int = now_ms
         from ..config import SNAPSHOT_INTERVAL_MS
         self._throttle_ms: int = SNAPSHOT_INTERVAL_MS
+        # Snapshot cache for fast initial WebSocket connections
+        self._snapshot_cache: str | None = None
+        self._snapshot_cache_ts: int = 0
+        self._snapshot_cache_ttl_ms: int = 5000  # 5 seconds
 
     async def ingest(self, k: Kline):
         state = self._states.get(k.symbol)
@@ -90,8 +94,20 @@ class Aggregator:
         return snap
 
     def _build_snapshot_payload(self) -> str:
+        """Build snapshot payload with caching for fast initial connections."""
+        import time
+        now_ms = int(time.time() * 1000)
+        
+        # Return cached snapshot if still fresh
+        if (self._snapshot_cache is not None 
+            and (now_ms - self._snapshot_cache_ts < self._snapshot_cache_ttl_ms)):
+            return self._snapshot_cache
+        
+        # Build fresh snapshot and cache it
         snap = self.build_snapshot()
         payload = snap.model_dump_json()
+        self._snapshot_cache = payload
+        self._snapshot_cache_ts = now_ms
         return payload
 
     async def emit_if_due(self):
@@ -107,8 +123,15 @@ class Aggregator:
         # Build snapshot object (for alerts) and payload
         snap = self.build_snapshot()
         payload = snap.model_dump_json()
+        
+        # Update cache when emitting to keep it fresh
+        import time
+        now_ms = int(time.time() * 1000)
+        self._snapshot_cache = payload
+        self._snapshot_cache_ts = now_ms
+        
         try:
-            self.last_emit_ts = int(__import__('time').time()*1000)
+            self.last_emit_ts = now_ms
         except Exception:
             pass
         # Persist alerts + trade plans, then fire notifications
