@@ -409,6 +409,58 @@ async def get_trade_history(limit: int = 100):
         import traceback
         return {"error": str(e), "traceback": traceback.format_exc()}
 
+# ==================== Market Data (L/S Ratio, Liquidations) ====================
+
+@app.get("/market_data/long_short_ratio/{exchange}/{symbol}")
+async def get_long_short_ratio(exchange: str, symbol: str):
+    """Get Long/Short ratio for a symbol.
+    
+    Returns the ratio of accounts/positions that are long vs short.
+    Higher ratio = more longs, Lower ratio = more shorts.
+    """
+    try:
+        from .services.market_data import fetch_long_short_ratio
+        data = await fetch_long_short_ratio(exchange, symbol)
+        if data is None:
+            return {"error": "Failed to fetch L/S ratio", "exchange": exchange, "symbol": symbol}
+        return data
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+
+@app.get("/market_data/liquidations/{exchange}/{symbol}")
+async def get_liquidations(exchange: str, symbol: str, limit: int = 20):
+    """Get recent liquidations for a symbol.
+    
+    Returns list of recent forced liquidations with size and direction.
+    """
+    try:
+        from .services.market_data import fetch_liquidations
+        data = await fetch_liquidations(exchange, symbol, limit=limit)
+        
+        # Calculate summary
+        long_liq = [l for l in data if l.get("side") == "SELL"]  # SELL = long liquidated
+        short_liq = [l for l in data if l.get("side") == "BUY"]  # BUY = short liquidated
+        
+        return {
+            "exchange": exchange,
+            "symbol": symbol,
+            "liquidations": data,
+            "summary": {
+                "total_count": len(data),
+                "long_liq_count": len(long_liq),
+                "short_liq_count": len(short_liq),
+                "total_value_usd": sum(l.get("value_usd", 0) for l in data),
+                "long_liq_value": sum(l.get("value_usd", 0) for l in long_liq),
+                "short_liq_value": sum(l.get("value_usd", 0) for l in short_liq),
+            }
+        }
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+
 # ==================== Funding Rate ====================
 
 @app.get("/funding_rate/{exchange}/{symbol}")
@@ -655,9 +707,10 @@ async def meta_trade_plan(exchange: str, symbol: str):
 
 @app.get("/symbol/details")
 async def symbol_details(exchange: str, symbol: str):
-    """Combined endpoint for symbol details modal - reduces 7 API calls to 1.
+    """Combined endpoint for symbol details modal - reduces API calls.
     
-    Returns: history, oi_history, trade_plan, backtest (30d & 90d), news, funding_rate
+    Returns: history, oi_history, trade_plan, backtest (30d & 90d), news, funding_rate,
+             long_short_ratio, liquidations
     """
     import json
     from .services.alert_store import get_latest_trade_plan
@@ -665,6 +718,7 @@ async def symbol_details(exchange: str, symbol: str):
     from .services.backtester import STRATEGY_VERSION
     from .services.news import get_news_provider
     from .services.funding_rate import fetch_funding_rate
+    from .services.market_data import fetch_market_data_combined
     
     result = {
         "exchange": exchange,
@@ -676,6 +730,9 @@ async def symbol_details(exchange: str, symbol: str):
         "bt90": None,
         "news": [],
         "funding": None,
+        "long_short_ratio": None,
+        "liquidations": [],
+        "liquidation_summary": None,
     }
     
     # Get history data
@@ -728,18 +785,34 @@ async def symbol_details(exchange: str, symbol: str):
     except Exception:
         pass
     
-    # Fetch news and funding rate concurrently
+    # Fetch news, funding rate, and market data (L/S ratio + liquidations) concurrently
     try:
         news_task = asyncio.create_task(_fetch_news_safe(symbol))
         funding_task = asyncio.create_task(_fetch_funding_safe(exchange, symbol))
+        market_data_task = asyncio.create_task(_fetch_market_data_safe(exchange, symbol))
         
-        news_result, funding_result = await asyncio.gather(news_task, funding_task)
+        news_result, funding_result, market_data_result = await asyncio.gather(
+            news_task, funding_task, market_data_task
+        )
         result["news"] = news_result
         result["funding"] = funding_result
+        if market_data_result:
+            result["long_short_ratio"] = market_data_result.get("long_short_ratio")
+            result["liquidations"] = market_data_result.get("liquidations", [])
+            result["liquidation_summary"] = market_data_result.get("liquidation_summary")
     except Exception:
         pass
     
     return result
+
+
+async def _fetch_market_data_safe(exchange: str, symbol: str):
+    """Fetch market data (L/S ratio + liquidations) with error handling."""
+    try:
+        from .services.market_data import fetch_market_data_combined
+        return await fetch_market_data_combined(exchange, symbol)
+    except Exception:
+        return None
 
 
 async def _fetch_news_safe(symbol: str):

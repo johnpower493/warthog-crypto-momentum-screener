@@ -30,6 +30,7 @@ class StreamManager:
         self._task_bybit_ticker: Optional[asyncio.Task] = None
         self._task_bin_oi: Optional[asyncio.Task] = None
         self._task_bybit_oi: Optional[asyncio.Task] = None
+        self._task_bybit_liquidations: Optional[asyncio.Task] = None
 
     async def start(self):
         import logging
@@ -131,6 +132,11 @@ class StreamManager:
             self._task_bin_oi = asyncio.create_task(self._run_binance_oi(syms_bin))
         if not self._task_bybit_oi or self._task_bybit_oi.done():
             self._task_bybit_oi = asyncio.create_task(self._run_bybit_oi(syms_bybit))
+        
+        # Start Bybit liquidations WebSocket collector
+        if not self._task_bybit_liquidations or self._task_bybit_liquidations.done():
+            log.info("Starting Bybit liquidations stream...")
+            self._task_bybit_liquidations = asyncio.create_task(self._run_bybit_liquidations(syms_bybit))
         # start watchdogs
         self._wd_bin = StreamWatchdog(
             name="binance_kline",
@@ -548,6 +554,31 @@ class StreamManager:
     def bybit_running(self) -> bool:
         return self._task_bybit is not None and not self._task_bybit.done()
 
+    async def _run_bybit_liquidations(self, symbols: list):
+        """Run Bybit liquidations WebSocket collectors for top symbols.
+        
+        Only subscribes to top N symbols by volume to avoid too many connections.
+        Liquidations are stored in memory and accessible via the market_data service.
+        """
+        import logging
+        log = logging.getLogger(__name__)
+        
+        # Limit to top 50 symbols to avoid overwhelming connections
+        # Liquidations are most important for high-volume symbols
+        top_symbols = symbols[:50] if len(symbols) > 50 else symbols
+        
+        log.info(f"Starting Bybit liquidations collectors for {len(top_symbols)} symbols")
+        
+        try:
+            from ..exchanges.bybit_liquidations_ws import run_liquidation_collector
+            await run_liquidation_collector(top_symbols)
+        except asyncio.CancelledError:
+            log.info("Bybit liquidations stream cancelled")
+            raise
+        except Exception as e:
+            log.error(f"Bybit liquidations stream error: {e}", exc_info=True)
+            raise
+
     async def stop(self):
         """Stop all running tasks and close clients."""
         tasks = [
@@ -557,6 +588,7 @@ class StreamManager:
             self._task_bybit_ticker,
             self._task_bin_oi,
             self._task_bybit_oi,
+            self._task_bybit_liquidations,
             getattr(self, "_task_health_monitor", None),
             getattr(self, "_task_full_refresh", None),
         ]

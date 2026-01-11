@@ -185,6 +185,32 @@ export default function Home() {
     fundingRateAnnual?: number | null;
     nextFundingTime?: number | null;
     fundingLoading?: boolean;
+    // Long/Short Ratio
+    longShortRatio?: {
+      long_ratio: number;
+      short_ratio: number;
+      long_short_ratio: number;
+      long_account: number;
+      short_account: number;
+      timestamp: number;
+    } | null;
+    // Liquidations
+    liquidations?: {
+      symbol: string;
+      side: string;
+      price: number;
+      qty: number;
+      value_usd: number;
+      timestamp: number;
+    }[];
+    liquidationSummary?: {
+      recent_count: number;
+      long_liq_count: number;
+      short_liq_count: number;
+      total_value_usd: number;
+      long_liq_value: number;
+      short_liq_value: number;
+    } | null;
   }>({ open: false });
   const [query, setQuery] = useState('');
 
@@ -747,10 +773,10 @@ export default function Home() {
       (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}:8000` : 'http://127.0.0.1:8000');
 
     // Show modal immediately with row data; load all details via combined endpoint
-    setModal({ open: true, row: r, closes: [], oi: [], loading: true, plan: null, bt30: null, bt90: null, news: [], newsLoading: true, fundingRate: null, fundingRateAnnual: null, nextFundingTime: null, fundingLoading: true });
+    setModal({ open: true, row: r, closes: [], oi: [], loading: true, plan: null, bt30: null, bt90: null, news: [], newsLoading: true, fundingRate: null, fundingRateAnnual: null, nextFundingTime: null, fundingLoading: true, longShortRatio: null, liquidations: [], liquidationSummary: null });
 
     try {
-      // Use combined endpoint - reduces 7 API calls to 1
+      // Use combined endpoint - reduces API calls
       const resp = await fetch(`${backendBase}/symbol/details?exchange=${encodeURIComponent(exchange)}&symbol=${encodeURIComponent(r.symbol)}`);
       if (resp.ok) {
         const data = await resp.json();
@@ -770,12 +796,15 @@ export default function Home() {
           fundingRateAnnual: data.funding?.funding_rate_annual ?? null,
           nextFundingTime: data.funding?.next_funding_time ?? null,
           fundingLoading: false,
+          longShortRatio: data.long_short_ratio || null,
+          liquidations: data.liquidations || [],
+          liquidationSummary: data.liquidation_summary || null,
         }));
       } else {
         throw new Error('Failed to fetch details');
       }
     } catch (e) {
-      setModal((m) => ({ ...m, open: true, row: r, closes: [], oi: [], news: [], newsLoading: false, loading: false, fundingLoading: false }));
+      setModal((m) => ({ ...m, open: true, row: r, closes: [], oi: [], news: [], newsLoading: false, loading: false, fundingLoading: false, longShortRatio: null, liquidations: [], liquidationSummary: null }));
     }
   };
 
@@ -1384,6 +1413,9 @@ export default function Home() {
           fundingRateAnnual={modal.fundingRateAnnual}
           nextFundingTime={modal.nextFundingTime}
           fundingLoading={!!modal.fundingLoading}
+          longShortRatio={modal.longShortRatio}
+          liquidations={modal.liquidations}
+          liquidationSummary={modal.liquidationSummary}
           isFav={favs.includes(idOf(modal.row))}
           onToggleFav={() => toggleFav(idOf(modal.row!), favs, setFavs)}
           onClose={() => setModal({ open: false })}
@@ -1596,6 +1628,9 @@ function DetailsModal({
   fundingRateAnnual,
   nextFundingTime,
   fundingLoading,
+  longShortRatio,
+  liquidations,
+  liquidationSummary,
   isFav,
   onToggleFav,
   onClose,
@@ -1617,6 +1652,30 @@ function DetailsModal({
   fundingRateAnnual?: number | null;
   nextFundingTime?: number | null;
   fundingLoading?: boolean;
+  longShortRatio?: {
+    long_ratio: number;
+    short_ratio: number;
+    long_short_ratio: number;
+    long_account: number;
+    short_account: number;
+    timestamp: number;
+  } | null;
+  liquidations?: {
+    symbol: string;
+    side: string;
+    price: number;
+    qty: number;
+    value_usd: number;
+    timestamp: number;
+  }[];
+  liquidationSummary?: {
+    recent_count: number;
+    long_liq_count: number;
+    short_liq_count: number;
+    total_value_usd: number;
+    long_liq_value: number;
+    short_liq_value: number;
+  } | null;
   isFav: boolean;
   onToggleFav: () => void;
   onClose: () => void;
@@ -2050,6 +2109,214 @@ function DetailsModal({
                     </div>
                   </div>
                 ) : null}
+
+                {/* Long/Short Ratio Section */}
+                {longShortRatio && (
+                  <div style={{ marginTop: 16 }}>
+                    <div className="muted" style={{ fontSize: 12, marginBottom: 8, fontWeight: 600 }}>📊 Long/Short Ratio</div>
+                    <div className="card" style={{ padding: 16, background: 'rgba(0,0,0,0.2)' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                        {/* Visual Bar */}
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#888', marginBottom: 4 }}>
+                            <span>Longs ({(longShortRatio.long_ratio * 100).toFixed(1)}%)</span>
+                            <span>Shorts ({(longShortRatio.short_ratio * 100).toFixed(1)}%)</span>
+                          </div>
+                          <div style={{ 
+                            display: 'flex', 
+                            height: 24, 
+                            borderRadius: 4, 
+                            overflow: 'hidden',
+                            background: 'rgba(0,0,0,0.3)'
+                          }}>
+                            <div style={{ 
+                              width: `${longShortRatio.long_ratio * 100}%`, 
+                              background: 'linear-gradient(90deg, #2a9d8f, #40c9a2)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: 11,
+                              fontWeight: 600,
+                              color: '#fff',
+                              textShadow: '0 1px 2px rgba(0,0,0,0.5)'
+                            }}>
+                              {longShortRatio.long_ratio >= 0.15 ? `${(longShortRatio.long_ratio * 100).toFixed(0)}%` : ''}
+                            </div>
+                            <div style={{ 
+                              width: `${longShortRatio.short_ratio * 100}%`, 
+                              background: 'linear-gradient(90deg, #e76f51, #f4845f)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: 11,
+                              fontWeight: 600,
+                              color: '#fff',
+                              textShadow: '0 1px 2px rgba(0,0,0,0.5)'
+                            }}>
+                              {longShortRatio.short_ratio >= 0.15 ? `${(longShortRatio.short_ratio * 100).toFixed(0)}%` : ''}
+                            </div>
+                          </div>
+                        </div>
+                        
+                        {/* Ratio Value */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div>
+                            <div style={{ fontSize: 11, color: '#888', marginBottom: 2 }}>L/S Ratio</div>
+                            <div style={{ 
+                              fontSize: 28, 
+                              fontWeight: 700, 
+                              color: longShortRatio.long_short_ratio > 1 ? '#2a9d8f' : longShortRatio.long_short_ratio < 1 ? '#e76f51' : 'var(--text)'
+                            }}>
+                              {longShortRatio.long_short_ratio.toFixed(2)}
+                            </div>
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontSize: 11, color: '#888', marginBottom: 2 }}>Sentiment</div>
+                            <div style={{ 
+                              fontSize: 14, 
+                              fontWeight: 600,
+                              color: longShortRatio.long_short_ratio > 1.2 ? '#2a9d8f' : 
+                                     longShortRatio.long_short_ratio < 0.8 ? '#e76f51' : '#f4a261'
+                            }}>
+                              {longShortRatio.long_short_ratio > 1.5 ? '🐂 Very Bullish' :
+                               longShortRatio.long_short_ratio > 1.2 ? '🐂 Bullish' :
+                               longShortRatio.long_short_ratio > 0.8 ? '⚖️ Neutral' :
+                               longShortRatio.long_short_ratio > 0.5 ? '🐻 Bearish' : '🐻 Very Bearish'}
+                            </div>
+                          </div>
+                        </div>
+                        
+                        {/* Contrarian Warning */}
+                        {(longShortRatio.long_short_ratio > 2 || longShortRatio.long_short_ratio < 0.5) && (
+                          <div style={{ 
+                            padding: '8px 12px', 
+                            background: 'rgba(244, 162, 97, 0.15)', 
+                            borderRadius: 6,
+                            fontSize: 11,
+                            color: '#f4a261',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 6
+                          }}>
+                            <span>⚠️</span>
+                            <span>
+                              {longShortRatio.long_short_ratio > 2 
+                                ? 'Extreme long bias - potential squeeze risk for longs'
+                                : 'Extreme short bias - potential squeeze risk for shorts'}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Liquidations Section */}
+                {(liquidationSummary && liquidationSummary.recent_count > 0) && (
+                  <div style={{ marginTop: 16 }}>
+                    <div className="muted" style={{ fontSize: 12, marginBottom: 8, fontWeight: 600 }}>💥 Recent Liquidations</div>
+                    <div className="card" style={{ padding: 16, background: 'rgba(0,0,0,0.2)' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                        {/* Summary Stats */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>Total</div>
+                            <div style={{ fontSize: 20, fontWeight: 700 }}>{liquidationSummary.recent_count}</div>
+                          </div>
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ fontSize: 11, color: '#2a9d8f', marginBottom: 4 }}>Long Liqs</div>
+                            <div style={{ fontSize: 20, fontWeight: 700, color: '#2a9d8f' }}>{liquidationSummary.long_liq_count}</div>
+                          </div>
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ fontSize: 11, color: '#e76f51', marginBottom: 4 }}>Short Liqs</div>
+                            <div style={{ fontSize: 20, fontWeight: 700, color: '#e76f51' }}>{liquidationSummary.short_liq_count}</div>
+                          </div>
+                        </div>
+                        
+                        {/* Value Bar */}
+                        {liquidationSummary.total_value_usd > 0 && (
+                          <div>
+                            <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>
+                              Total Value: ${(liquidationSummary.total_value_usd / 1000).toFixed(1)}K
+                            </div>
+                            <div style={{ 
+                              display: 'flex', 
+                              height: 16, 
+                              borderRadius: 4, 
+                              overflow: 'hidden',
+                              background: 'rgba(0,0,0,0.3)'
+                            }}>
+                              {liquidationSummary.long_liq_value > 0 && (
+                                <div style={{ 
+                                  width: `${(liquidationSummary.long_liq_value / liquidationSummary.total_value_usd) * 100}%`, 
+                                  background: '#2a9d8f',
+                                  minWidth: 2
+                                }} />
+                              )}
+                              {liquidationSummary.short_liq_value > 0 && (
+                                <div style={{ 
+                                  width: `${(liquidationSummary.short_liq_value / liquidationSummary.total_value_usd) * 100}%`, 
+                                  background: '#e76f51',
+                                  minWidth: 2
+                                }} />
+                              )}
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#888', marginTop: 4 }}>
+                              <span style={{ color: '#2a9d8f' }}>${(liquidationSummary.long_liq_value / 1000).toFixed(1)}K longs</span>
+                              <span style={{ color: '#e76f51' }}>${(liquidationSummary.short_liq_value / 1000).toFixed(1)}K shorts</span>
+                            </div>
+                          </div>
+                        )}
+                        
+                        {/* Recent Liquidations List */}
+                        {liquidations && liquidations.length > 0 && (
+                          <div>
+                            <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>Recent Events</div>
+                            <div style={{ 
+                              maxHeight: 150, 
+                              overflowY: 'auto',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 4
+                            }}>
+                              {liquidations.slice(0, 10).map((liq, idx) => (
+                                <div 
+                                  key={idx}
+                                  style={{ 
+                                    display: 'flex', 
+                                    justifyContent: 'space-between', 
+                                    alignItems: 'center',
+                                    padding: '6px 8px',
+                                    background: 'rgba(0,0,0,0.2)',
+                                    borderRadius: 4,
+                                    fontSize: 12
+                                  }}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <span style={{ 
+                                      width: 6, 
+                                      height: 6, 
+                                      borderRadius: '50%', 
+                                      background: liq.side === 'SELL' ? '#2a9d8f' : '#e76f51'
+                                    }} />
+                                    <span style={{ color: liq.side === 'SELL' ? '#2a9d8f' : '#e76f51', fontWeight: 600 }}>
+                                      {liq.side === 'SELL' ? 'LONG' : 'SHORT'}
+                                    </span>
+                                  </div>
+                                  <span style={{ color: '#888' }}>${fmt(liq.price)}</span>
+                                  <span style={{ fontWeight: 600 }}>${(liq.value_usd / 1000).toFixed(1)}K</span>
+                                  <span style={{ color: '#666', fontSize: 10 }}>
+                                    {new Date(liq.timestamp).toLocaleTimeString()}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
