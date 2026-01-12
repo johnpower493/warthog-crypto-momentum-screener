@@ -2221,7 +2221,7 @@ function DetailsModal({
         </div>
         
         {/* Tab Navigation */}
-        <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', padding: '0 12px', background: 'var(--bg-secondary)' }}>
+        <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', padding: '0 8px', background: 'var(--bg-secondary)', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
           <button 
             className={`button ${activeTab === 'overview' ? '' : ''}`}
             onClick={() => setActiveTab('overview')}
@@ -2229,11 +2229,13 @@ function DetailsModal({
               border: 'none',
               borderBottom: activeTab === 'overview' ? '2px solid var(--accent, #4a9eff)' : '2px solid transparent',
               borderRadius: 0,
-              padding: '12px 20px',
+              padding: '12px 14px',
               marginBottom: '-2px',
               fontWeight: activeTab === 'overview' ? 600 : 400,
               background: 'transparent',
-              opacity: activeTab === 'overview' ? 1 : 0.6
+              opacity: activeTab === 'overview' ? 1 : 0.6,
+              whiteSpace: 'nowrap',
+              fontSize: 13
             }}
           >
             Overview
@@ -2245,14 +2247,16 @@ function DetailsModal({
               border: 'none',
               borderBottom: activeTab === 'plan' ? '2px solid var(--accent, #4a9eff)' : '2px solid transparent',
               borderRadius: 0,
-              padding: '12px 20px',
+              padding: '12px 14px',
               marginBottom: '-2px',
               fontWeight: activeTab === 'plan' ? 600 : 400,
               background: 'transparent',
-              opacity: activeTab === 'plan' ? 1 : 0.6
+              opacity: activeTab === 'plan' ? 1 : 0.6,
+              whiteSpace: 'nowrap',
+              fontSize: 13
             }}
           >
-            Trade Plan
+            Plan
           </button>
           <button 
             className={`button ${activeTab === 'indicators' ? '' : ''}`}
@@ -2261,14 +2265,16 @@ function DetailsModal({
               border: 'none',
               borderBottom: activeTab === 'indicators' ? '2px solid var(--accent, #4a9eff)' : '2px solid transparent',
               borderRadius: 0,
-              padding: '12px 20px',
+              padding: '12px 14px',
               marginBottom: '-2px',
               fontWeight: activeTab === 'indicators' ? 600 : 400,
               background: 'transparent',
-              opacity: activeTab === 'indicators' ? 1 : 0.6
+              opacity: activeTab === 'indicators' ? 1 : 0.6,
+              whiteSpace: 'nowrap',
+              fontSize: 13
             }}
           >
-            📊 Indicators
+            📊
           </button>
           <button 
             className={`button ${activeTab === 'news' ? '' : ''}`}
@@ -2277,14 +2283,16 @@ function DetailsModal({
               border: 'none',
               borderBottom: activeTab === 'news' ? '2px solid var(--accent, #4a9eff)' : '2px solid transparent',
               borderRadius: 0,
-              padding: '12px 20px',
+              padding: '12px 14px',
               marginBottom: '-2px',
               fontWeight: activeTab === 'news' ? 600 : 400,
               background: 'transparent',
-              opacity: activeTab === 'news' ? 1 : 0.6
+              opacity: activeTab === 'news' ? 1 : 0.6,
+              whiteSpace: 'nowrap',
+              fontSize: 13
             }}
           >
-            📰 News
+            📰
           </button>
         </div>
 

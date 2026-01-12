@@ -17,26 +17,46 @@ export default function App({ Component, pageProps }: AppProps) {
       
       {/* Mobile Bottom Navigation */}
       <nav className="mobile-nav">
-        <a href="/" className={currentPath === '/' ? 'active' : ''}>
+        <button 
+          className={currentPath === '/' ? 'active' : ''} 
+          onClick={() => router.push('/')}
+          style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}
+        >
           <span className="icon">📊</span>
           Screener
-        </a>
-        <a href="/alerts" className={currentPath === '/alerts' ? 'active' : ''}>
+        </button>
+        <button 
+          className={currentPath === '/alerts' ? 'active' : ''} 
+          onClick={() => router.push('/alerts')}
+          style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}
+        >
           <span className="icon">🔔</span>
           Alerts
-        </a>
-        <a href="/portfolio" className={currentPath === '/portfolio' ? 'active' : ''}>
+        </button>
+        <button 
+          className={currentPath === '/portfolio' ? 'active' : ''} 
+          onClick={() => router.push('/portfolio')}
+          style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}
+        >
           <span className="icon">💼</span>
           Portfolio
-        </a>
-        <a href="/feed" className={currentPath === '/feed' ? 'active' : ''}>
+        </button>
+        <button 
+          className={currentPath === '/feed' ? 'active' : ''} 
+          onClick={() => router.push('/feed')}
+          style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}
+        >
           <span className="icon">📰</span>
           Feed
-        </a>
-        <a href="/analysis" className={currentPath === '/analysis' ? 'active' : ''}>
+        </button>
+        <button 
+          className={currentPath === '/analysis' ? 'active' : ''} 
+          onClick={() => router.push('/analysis')}
+          style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}
+        >
           <span className="icon">🔬</span>
           Analysis
-        </a>
+        </button>
       </nav>
     </>
   );
