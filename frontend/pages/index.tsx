@@ -3133,9 +3133,9 @@ function DetailsModal({
                 )}
                 {!newsLoading && (!news || news.length === 0) && (
                   <div className="card" style={{ padding: 32, textAlign: 'center' }}>
-                    <div className="muted">No news articles found for {row.symbol}</div>
+                    <div className="muted">No news articles found</div>
                     <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-                      Showing general crypto market news instead
+                      Unable to fetch news at this time. Please try again later.
                     </div>
                   </div>
                 )}

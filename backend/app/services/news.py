@@ -95,6 +95,8 @@ class NewsProvider:
                         
                         # Filter articles relevant to the symbol
                         filtered_articles = []
+                        seen_ids = set()
+                        
                         for article in all_articles:
                             tags = article.get("tags", "").lower()
                             categories = article.get("categories", "").lower()
@@ -106,14 +108,18 @@ class NewsProvider:
                                 normalized.lower() in categories or
                                 normalized.lower() in title or
                                 normalized.lower() in body):
-                                filtered_articles.append(self._format_article(article))
+                                formatted = self._format_article(article)
+                                if formatted["id"] not in seen_ids:
+                                    filtered_articles.append(formatted)
+                                    seen_ids.add(formatted["id"])
                         
                         # If we don't have enough symbol-specific news, include general crypto news
                         if len(filtered_articles) < 5:
                             for article in all_articles[:limit]:
                                 formatted = self._format_article(article)
-                                if formatted not in filtered_articles:
+                                if formatted["id"] not in seen_ids:
                                     filtered_articles.append(formatted)
+                                    seen_ids.add(formatted["id"])
                                 if len(filtered_articles) >= limit:
                                     break
                         
