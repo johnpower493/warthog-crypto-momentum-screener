@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 export default function About() {
-  const [expandedSection, setExpandedSection] = useState<string | null>(null);
+  const [expandedSection, setExpandedSection] = useState<string | null>('overview');
 
   const toggleSection = (section: string) => {
     setExpandedSection(expandedSection === section ? null : section);
@@ -9,85 +9,403 @@ export default function About() {
 
   return (
     <div style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto', fontFamily: 'system-ui, sans-serif' }}>
-      <div style={{ marginBottom: '20px', display: 'flex', gap: '10px', alignItems: 'center' }}>
+      <div style={{ marginBottom: '20px', display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
         <a href="/" className="button">← Back to Screener</a>
         <h1 style={{ margin: 0, flex: 1 }}>About Warthog Crypto Screener</h1>
+        <span style={{ fontSize: '12px', color: '#7d8aa5', padding: '4px 8px', background: '#111823', border: '1px solid #1f2a37', borderRadius: 4 }}>v2.0</span>
+      </div>
+      
+      {/* Quick Navigation */}
+      <div style={{ marginBottom: '20px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+        {['overview', 'howto', 'terms', 'indicators', 'orderflow', 'marketdata', 'faq', 'troubleshooting', 'tips', 'technical'].map(section => (
+          <button
+            key={section}
+            onClick={() => setExpandedSection(section)}
+            style={{
+              padding: '6px 12px',
+              background: expandedSection === section ? '#4cc9f0' : 'linear-gradient(180deg, #1b2635, #111826)',
+              border: `1px solid ${expandedSection === section ? '#4cc9f0' : '#1f2a37'}`,
+              borderRadius: 8,
+              color: expandedSection === section ? '#0b0f14' : '#e6edf3',
+              fontSize: '12px',
+              cursor: 'pointer',
+              fontWeight: expandedSection === section ? 600 : 400
+            }}
+          >
+            {section === 'overview' ? '📋 Overview' :
+             section === 'howto' ? '🚀 How to Use' :
+             section === 'terms' ? '📖 Glossary' :
+             section === 'indicators' ? '📊 Indicators' :
+             section === 'orderflow' ? '📈 Order Flow' :
+             section === 'marketdata' ? '💹 Market Data' :
+             section === 'faq' ? '❓ FAQ' :
+             section === 'troubleshooting' ? '🔧 Troubleshooting' :
+             section === 'tips' ? '💡 Tips' :
+             section === 'technical' ? '⚙️ Technical' : section}
+          </button>
+        ))}
       </div>
 
       <div style={{ display: 'grid', gap: '20px' }}>
         {/* Overview Section */}
-        <Section title="Overview" expanded={expandedSection === 'overview'} onToggle={() => toggleSection('overview')}>
+        <Section title="📋 Overview" expanded={expandedSection === 'overview'} onToggle={() => toggleSection('overview')}>
           <p>
-            Warthog is a real-time cryptocurrency momentum screener that monitors multiple exchanges (Binance, Bybit) 
-            and provides actionable trading signals based on technical indicators, volume analysis, and order flow data.
+            Warthog is a professional-grade cryptocurrency trading platform that combines real-time market data, 
+            advanced technical indicators, and institutional-level order flow analysis. It monitors multiple exchanges 
+            (Binance, Bybit) and provides actionable insights for both scalping and swing trading.
           </p>
-          <h3>Key Features:</h3>
+          
+          <h3>🎯 Core Features</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '15px' }}>
+            <FeatureCard 
+              icon="⚡" 
+              title="Real-time Screener" 
+              description="Sub-second WebSocket updates for 400+ symbols across Binance & Bybit perpetual futures"
+            />
+            <FeatureCard 
+              icon="📊" 
+              title="Order Flow Analysis" 
+              description="Footprint charts, bid/ask imbalances, CVD tracking, and real-time order book wall detection"
+            />
+            <FeatureCard 
+              icon="💧" 
+              title="Liquidation Heatmap" 
+              description="Real-time liquidation tracking with price level clustering to identify potential squeeze zones"
+            />
+            <FeatureCard 
+              icon="📈" 
+              title="Long/Short Ratio" 
+              description="Live sentiment data showing the balance between long and short positions"
+            />
+            <FeatureCard 
+              icon="🛡️" 
+              title="Support/Resistance Walls" 
+              description="Automated detection of large resting orders from the live order book"
+            />
+            <FeatureCard 
+              icon="🔔" 
+              title="Smart Alerts" 
+              description="Telegram/Discord notifications for high-probability Cipher B signals"
+            />
+            <FeatureCard 
+              icon="📝" 
+              title="Trade Planning" 
+              description="Auto-generated entry, stop-loss, and take-profit levels based on ATR"
+            />
+            <FeatureCard 
+              icon="📰" 
+              title="News Integration" 
+              description="Real-time crypto news feed with symbol-specific filtering"
+            />
+            <FeatureCard 
+              icon="💼" 
+              title="Portfolio Tracking" 
+              description="Track your positions with real-time P&L calculations"
+            />
+          </div>
+
+          <h3 style={{ marginTop: '20px' }}>🏆 What Makes Warthog Different</h3>
           <ul>
-            <li><strong>Real-time data:</strong> WebSocket connections to exchanges for sub-second updates</li>
-            <li><strong>Multi-timeframe analysis:</strong> Tracks 1m, 5m, 15m, and 60m price changes</li>
-            <li><strong>Advanced indicators:</strong> Cipher B (WaveTrend), momentum, volume analysis</li>
-            <li><strong>Order flow tracking:</strong> Open interest changes and footprint charts</li>
-            <li><strong>Smart alerts:</strong> Telegram/Discord notifications for high-probability setups</li>
-            <li><strong>Trade planning:</strong> Auto-generated entry, stop-loss, and take-profit levels</li>
+            <li><strong>Institutional-level data:</strong> Order flow, liquidations, and order book analysis typically only available in expensive platforms</li>
+            <li><strong>Real-time everything:</strong> All data streams via WebSocket - no polling or delays</li>
+            <li><strong>Multi-exchange:</strong> Compare the same pairs across Binance and Bybit</li>
+            <li><strong>Self-hosted:</strong> Your data, your privacy, no subscription fees</li>
+            <li><strong>Fully customizable:</strong> Open source with configurable thresholds and filters</li>
           </ul>
         </Section>
 
         {/* How to Use Section */}
-        <Section title="How to Use" expanded={expandedSection === 'howto'} onToggle={() => toggleSection('howto')}>
-          <h3>Main Screener</h3>
+        <Section title="🚀 How to Use" expanded={expandedSection === 'howto'} onToggle={() => toggleSection('howto')}>
+          <h3>📊 Main Screener</h3>
           <ol>
-            <li><strong>Quick Filters:</strong> Use preset buttons (Gainers 5m, Losers 5m, Volatile, etc.) to quickly filter the list</li>
-            <li><strong>Search:</strong> Type a symbol name to find specific coins</li>
-            <li><strong>Sort:</strong> Click column headers to sort by any metric</li>
-            <li><strong>Favorites:</strong> Click the star (⭐) next to any symbol to add it to your watchlist</li>
-            <li><strong>Details:</strong> Click any row to open a detailed modal with:
-              <ul>
-                <li>15-minute price chart</li>
-                <li>Open interest trend</li>
-                <li>Auto-generated trade plan with entry/stop/targets</li>
-                <li>Backtesting results (30-day and 90-day)</li>
-              </ul>
-            </li>
+            <li><strong>Quick Filters:</strong> Use preset buttons (Gainers 5m, Losers 5m, Volatile, High Signal, Cipher Buy/Sell, etc.) to quickly narrow down opportunities</li>
+            <li><strong>Search:</strong> Type a symbol name to find specific coins (e.g., "BTC", "ETH")</li>
+            <li><strong>Sort:</strong> Click any column header to sort - click again to reverse</li>
+            <li><strong>Favorites:</strong> Click the star (⭐) to add symbols to your watchlist, then use "Favorites" filter to view only starred symbols</li>
+            <li><strong>Exchange Toggle:</strong> Switch between Binance and Bybit, or view both simultaneously</li>
+            <li><strong>Columns:</strong> Use the ⚙️ button to customize which metrics are displayed</li>
           </ol>
 
-          <h3>Navigation</h3>
+          <h3>🔍 Symbol Details Modal</h3>
+          <p>Click any row to open the detailed analysis modal with five tabs:</p>
+          
+          <div style={{ marginLeft: '20px', marginBottom: '15px' }}>
+            <h4 style={{ color: '#4cc9f0', marginBottom: '8px' }}>Overview Tab</h4>
+            <ul>
+              <li>Price chart with 15-minute candles and key levels</li>
+              <li>Open interest trend chart</li>
+              <li>Funding rate with annualized percentage</li>
+              <li><strong>Long/Short Ratio:</strong> Visual bar showing market sentiment</li>
+              <li><strong>Liquidation Heatmap:</strong> Real-time liquidations at price levels (shows where traders are getting liquidated)</li>
+            </ul>
+            
+            <h4 style={{ color: '#4cc9f0', marginBottom: '8px' }}>Trade Plan Tab</h4>
+            <ul>
+              <li>Auto-generated entry, stop-loss (SL), and take-profit (TP) levels</li>
+              <li><strong>Order Book Walls:</strong> Real-time detection of large resting buy/sell orders</li>
+              <li><strong>Swing Trading Zones:</strong> Clustered support/resistance levels within 10% of price</li>
+              <li><strong>Order Flow Footprint:</strong> Bid/ask volume at each price level with imbalance highlighting</li>
+              <li><strong>CVD (Cumulative Volume Delta):</strong> Running total of buying vs selling pressure</li>
+              <li>30-day and 90-day backtesting results</li>
+            </ul>
+            
+            <h4 style={{ color: '#4cc9f0', marginBottom: '8px' }}>News Tab</h4>
+            <ul>
+              <li>Symbol-specific news from CryptoCompare</li>
+              <li>Falls back to general crypto news if no specific articles found</li>
+            </ul>
+            
+            <h4 style={{ color: '#4cc9f0', marginBottom: '8px' }}>Indicators Tab</h4>
+            <ul>
+              <li>Williams %R trend exhaustion indicator</li>
+              <li>Technical analysis overlays</li>
+            </ul>
+          </div>
+
+          <h3>🧭 Navigation Bar</h3>
           <ul>
-            <li><strong>📊 (Table icon):</strong> Main screener (home page)</li>
-            <li><strong>🔔 History:</strong> View all past alerts</li>
-            <li><strong>📈 Feed:</strong> High-quality signal feed with detailed analysis</li>
-            <li><strong>📉 Analysis:</strong> Strategy performance dashboard and backtesting results</li>
-            <li><strong>⚙️ Columns:</strong> Customize which columns to display</li>
+            <li><strong>📊 Screener:</strong> Main table view (home page)</li>
+            <li><strong>🔔 Alerts:</strong> View all past signal alerts with timestamps</li>
+            <li><strong>📈 Feed:</strong> Curated high-quality signals meeting strict criteria</li>
+            <li><strong>📉 Analysis:</strong> Strategy performance dashboard and backtesting statistics</li>
+            <li><strong>💼 Portfolio:</strong> Track your positions with real-time P&L</li>
+            <li><strong>❓ About:</strong> This documentation page</li>
           </ul>
 
-          <h3>Keyboard Shortcuts (in modal)</h3>
+          <h3>⌨️ Keyboard Shortcuts</h3>
           <ul>
-            <li><strong>↑ / ↓:</strong> Navigate to previous/next symbol</li>
+            <li><strong>↑ / ↓:</strong> Navigate to previous/next symbol in modal</li>
             <li><strong>Esc:</strong> Close modal</li>
+            <li><strong>Click outside modal:</strong> Close modal</li>
+          </ul>
+          
+          <h3>🔄 Status Indicators</h3>
+          <ul>
+            <li><strong style={{ color: '#16a34a' }}>🟢 Connected:</strong> Real-time data flowing</li>
+            <li><strong style={{ color: '#4cc9f0' }}>🟡 Reconnecting:</strong> Temporary connection issue, auto-reconnecting</li>
+            <li><strong style={{ color: '#ef4444' }}>🔴 Disconnected:</strong> No connection - check backend status</li>
+            <li><strong>LIVE badge:</strong> Indicates real-time WebSocket streaming (not cached data)</li>
           </ul>
         </Section>
 
         {/* Acronyms & Terminology */}
-        <Section title="Acronyms & Terminology" expanded={expandedSection === 'terms'} onToggle={() => toggleSection('terms')}>
-          <div style={{ display: 'grid', gap: '15px' }}>
-            <Term term="ATR" definition="Average True Range - Measures volatility. Higher ATR = bigger price swings. Used for position sizing and stop-loss placement." />
-            <Term term="VWAP" definition="Volume Weighted Average Price - The average price weighted by volume. Price above VWAP suggests bullish bias, below suggests bearish." />
-            <Term term="OI / Open Interest" definition="Total number of outstanding derivative contracts. Rising OI + rising price = strong trend. Falling OI = trend weakening." />
-            <Term term="Vol Z / Volume Z-Score" definition="How many standard deviations current volume is from its average. High Z-score (>2) indicates unusual activity." />
-            <Term term="RVOL" definition="Relative Volume - Current volume compared to average. RVOL > 1.5 suggests increased interest." />
-            <Term term="Cipher B" definition="Advanced momentum indicator (WaveTrend oscillator) that identifies overbought/oversold conditions and trend reversals. Uses two lines (WT1, WT2) - crosses indicate potential entries." />
-            <Term term="WT1 / WT2" definition="WaveTrend lines used in Cipher B. WT1 crossing above WT2 in oversold zone = buy signal. WT1 crossing below WT2 in overbought zone = sell signal." />
-            <Term term="Signal Score" definition="Composite score (0-100) combining multiple factors: momentum, volume, Cipher B, and open interest. Higher = stronger signal." />
-            <Term term="Impulse Score" definition="Measures short-term momentum bursts. High positive = strong buying pressure, high negative = strong selling pressure." />
-            <Term term="Momentum Score" definition="Multi-timeframe momentum indicator. Positive = uptrend, negative = downtrend. Magnitude indicates strength." />
-            <Term term="Breakout 15m" definition="Distance from 15-minute high. Positive value = near breakout, negative = far from high." />
-            <Term term="R (Risk Multiple)" definition="Profit/loss measured in multiples of initial risk. 2R = 2x your risk, -1R = full stop loss hit." />
-            <Term term="MAE / MFE" definition="Maximum Adverse/Favorable Excursion - Worst drawdown and best profit during a trade, measured in R multiples." />
-            <Term term="Win Rate" definition="Percentage of profitable trades. 60% win rate = 6 out of 10 trades are winners." />
+        <Section title="📖 Glossary & Terminology" expanded={expandedSection === 'terms'} onToggle={() => toggleSection('terms')}>
+          <h3>📈 Price & Volume Metrics</h3>
+          <div style={{ display: 'grid', gap: '12px', marginBottom: '20px' }}>
+            <Term term="ATR (Average True Range)" definition="Measures volatility over 14 periods. Higher ATR = bigger price swings. Used for position sizing and stop-loss placement. Example: ATR of $500 on BTC means typical movement is $500 per candle." />
+            <Term term="VWAP (Volume Weighted Average Price)" definition="The average price weighted by volume throughout the session. Institutional benchmark - price above VWAP suggests bullish bias, below suggests bearish. Great for identifying fair value." />
+            <Term term="Vol Z / Volume Z-Score" definition="Statistical measure showing how unusual current volume is. Z-score of 2 = volume is 2 standard deviations above normal. Values >2 indicate significant market interest." />
+            <Term term="RVOL (Relative Volume)" definition="Current volume compared to average volume. RVOL of 1.5 = 50% more volume than usual. High RVOL confirms price moves are significant." />
+            <Term term="Spread" definition="Difference between best bid and best ask price. Tight spread = high liquidity. Wide spread = low liquidity or high volatility." />
+          </div>
+          
+          <h3>📊 Technical Indicators</h3>
+          <div style={{ display: 'grid', gap: '12px', marginBottom: '20px' }}>
+            <Term term="Cipher B / WaveTrend" definition="Advanced momentum oscillator that identifies overbought/oversold conditions and trend reversals. Uses two lines (WT1, WT2) - crosses indicate potential entries. Overbought >40, Oversold <-40." />
+            <Term term="WT1 / WT2" definition="WaveTrend lines used in Cipher B. WT1 is the fast line, WT2 is the slow line. WT1 crossing above WT2 in oversold zone = buy signal. WT1 crossing below WT2 in overbought zone = sell signal." />
+            <Term term="Williams %R" definition="Momentum indicator showing where price closed relative to the high-low range. Ranges from 0 to -100. Above -20 = overbought, below -80 = oversold. Used for trend exhaustion detection." />
+            <Term term="Signal Score" definition="Composite score (0-100) combining multiple factors: momentum, volume, Cipher B, and open interest. Scores above 70 indicate strong setups worth investigating." />
+            <Term term="Impulse Score" definition="Measures sudden bursts of buying/selling pressure. High positive (>80) = strong buying pressure, high negative (<-80) = strong selling pressure. Good for timing entries." />
+            <Term term="Momentum Score" definition="Multi-timeframe momentum indicator combining 5m and 15m price action. Positive = uptrend, negative = downtrend. Magnitude indicates strength." />
+            <Term term="Breakout 15m" definition="Distance from 15-minute high as a percentage. Positive value = at or near breakout level. Useful for finding coins testing resistance." />
+          </div>
+          
+          <h3>💹 Derivatives & Order Flow</h3>
+          <div style={{ display: 'grid', gap: '12px', marginBottom: '20px' }}>
+            <Term term="OI (Open Interest)" definition="Total number of outstanding futures/perpetual contracts. Rising OI = new money entering. Falling OI = positions closing. Key for confirming trend strength." />
+            <Term term="OI Delta / OI Δ" definition="Change in open interest over a period. Positive delta = positions being opened. Negative delta = positions being closed. Shown as percentage change." />
+            <Term term="Funding Rate" definition="Periodic payment between long and short traders in perpetual futures. Positive = longs pay shorts (market bullish). Negative = shorts pay longs (market bearish). Extreme values often precede reversals." />
+            <Term term="L/S Ratio (Long/Short Ratio)" definition="Ratio of long positions to short positions. Ratio >1 = more longs than shorts. Extreme ratios (>2 or <0.5) can indicate crowded trades and potential squeeze risk." />
+            <Term term="CVD (Cumulative Volume Delta)" definition="Running total of (buy volume - sell volume). Rising CVD = net buying pressure. Falling CVD = net selling pressure. Divergence from price can signal reversals." />
+            <Term term="Footprint Chart" definition="Order flow visualization showing bid/ask volume at each price level. Reveals where actual buying and selling occurred, not just price movement." />
+            <Term term="Imbalance" definition="When bid or ask volume at a price level is significantly higher than the other (typically 3:1 ratio). Indicates absorption or aggressive buying/selling." />
+            <Term term="Liquidation" definition="Forced closure of a leveraged position when margin requirements aren't met. Large liquidations can cascade and accelerate price moves." />
+            <Term term="Wall" definition="Large resting order in the order book at a specific price level. Bid walls = support (buying interest). Ask walls = resistance (selling interest). Strength shown as multiple of average (e.g., 2.5x)." />
+          </div>
+          
+          <h3>📐 Trading & Risk Metrics</h3>
+          <div style={{ display: 'grid', gap: '12px', marginBottom: '20px' }}>
+            <Term term="R (Risk Multiple)" definition="Profit/loss measured in multiples of initial risk. If you risk $100, a 2R winner = $200 profit, -1R = $100 loss (full stop hit). Standard way to compare trades regardless of size." />
+            <Term term="MAE (Maximum Adverse Excursion)" definition="The worst drawdown during a trade before it closed. MAE of -1.5R means the trade went against you by 1.5x your risk at its worst point." />
+            <Term term="MFE (Maximum Favorable Excursion)" definition="The best profit point during a trade before it closed. MFE of 3R means the trade was up 3x your risk at its peak." />
+            <Term term="Win Rate" definition="Percentage of profitable trades. A 60% win rate = 6 out of 10 trades are winners. Must be considered alongside average R to determine profitability." />
+            <Term term="Avg R" definition="Average profit/loss per trade in R multiples. Positive Avg R with reasonable win rate = profitable strategy. Example: 0.5R average means you make 0.5x your risk per trade on average." />
+            <Term term="SL (Stop Loss)" definition="Price level where you exit a losing trade to limit risk. Typically placed at 1-2x ATR from entry or below key support/resistance." />
+            <Term term="TP (Take Profit)" definition="Price level where you exit a winning trade to lock in profits. Usually set at 1.5R, 2.5R, and 4R multiples of risk." />
+          </div>
+          
+          <h3>🏷️ Interface Terms</h3>
+          <div style={{ display: 'grid', gap: '12px' }}>
+            <Term term="Scalping Walls" definition="Large order book orders within 3% of current price. Used for short-term trading decisions and immediate support/resistance levels." />
+            <Term term="Swing Zones" definition="Aggregated/clustered order book walls within 10% of price. Used for swing trading, identifying key levels for multi-day positions." />
+            <Term term="Cluster" definition="Multiple nearby orders grouped together into a single zone. Shows total value, order count, and price range. Stronger signal than individual orders." />
+            <Term term="Strength (x)" definition="How much larger an order or level is compared to average. 2.5x = 2.5 times the average size. Higher = more significant." />
+            <Term term="Distance (%)" definition="How far a price level is from current price as a percentage. 1.5% away = price would need to move 1.5% to reach that level." />
           </div>
         </Section>
 
+        {/* Order Flow Section */}
+        <Section title="📈 Order Flow Analysis" expanded={expandedSection === 'orderflow'} onToggle={() => toggleSection('orderflow')}>
+          <p>
+            Order flow analysis reveals the actual buying and selling activity behind price movements. Unlike traditional 
+            indicators that only look at price, order flow shows you <em>who</em> is trading and <em>how aggressively</em>.
+          </p>
+          
+          <h3>🛡️ Order Book Walls</h3>
+          <p>
+            Walls are large resting limit orders that act as support or resistance. Warthog detects these in real-time 
+            from the live order book and displays them in two categories:
+          </p>
+          <div style={{ marginLeft: '20px', marginBottom: '15px' }}>
+            <h4 style={{ color: '#16a34a' }}>Support Walls (Bid Side) 🟢</h4>
+            <p>Large buy orders below current price. When price approaches these levels, the wall may absorb selling pressure 
+            and cause a bounce. Shown in green.</p>
+            
+            <h4 style={{ color: '#ef4444' }}>Resistance Walls (Ask Side) 🔴</h4>
+            <p>Large sell orders above current price. When price approaches these levels, the wall may absorb buying pressure 
+            and cause a rejection. Shown in red.</p>
+          </div>
+          
+          <h4>Wall Metrics:</h4>
+          <ul>
+            <li><strong>Price:</strong> The price level where the wall exists</li>
+            <li><strong>Value ($):</strong> Total USD value of orders at that level</li>
+            <li><strong>Strength (x):</strong> How much larger than average (2.5x = 2.5 times bigger than typical level)</li>
+            <li><strong>Distance (%):</strong> How far from current price</li>
+          </ul>
+          
+          <h3>📊 Scalping Walls vs Swing Zones</h3>
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '15px' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #1f2a37' }}>
+                <th style={{ textAlign: 'left', padding: '8px', color: '#7d8aa5' }}>Feature</th>
+                <th style={{ textAlign: 'left', padding: '8px', color: '#7d8aa5' }}>Scalping Walls</th>
+                <th style={{ textAlign: 'left', padding: '8px', color: '#7d8aa5' }}>Swing Zones</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td style={{ padding: '8px' }}>Distance from price</td><td style={{ padding: '8px' }}>Within 3%</td><td style={{ padding: '8px' }}>Within 10%</td></tr>
+              <tr><td style={{ padding: '8px' }}>Clustering</td><td style={{ padding: '8px' }}>No</td><td style={{ padding: '8px' }}>Yes (nearby orders grouped)</td></tr>
+              <tr><td style={{ padding: '8px' }}>Best for</td><td style={{ padding: '8px' }}>Day trading, quick scalps</td><td style={{ padding: '8px' }}>Swing trades, position entries</td></tr>
+              <tr><td style={{ padding: '8px' }}>Use case</td><td style={{ padding: '8px' }}>Immediate S/R levels</td><td style={{ padding: '8px' }}>Key zones, SL/TP placement</td></tr>
+            </tbody>
+          </table>
+          
+          <h3>📉 Footprint Chart</h3>
+          <p>The footprint chart shows bid and ask volume at each price level for each candle:</p>
+          <ul>
+            <li><strong>Bid Volume (left/green):</strong> Volume traded at the bid price (selling into bids)</li>
+            <li><strong>Ask Volume (right/red):</strong> Volume traded at the ask price (buying from asks)</li>
+            <li><strong>Imbalance Highlighting:</strong> Rows turn yellow when bid/ask ratio exceeds 3:1</li>
+            <li><strong>Delta:</strong> Difference between ask and bid volume (positive = net buying)</li>
+          </ul>
+          
+          <h3>📈 CVD (Cumulative Volume Delta)</h3>
+          <p>
+            CVD tracks the running total of buying vs selling volume. It helps identify:
+          </p>
+          <ul>
+            <li><strong>Trend Confirmation:</strong> Rising price + rising CVD = healthy uptrend</li>
+            <li><strong>Divergence:</strong> Rising price + falling CVD = potential weakness (buyers exhausted)</li>
+            <li><strong>Absorption:</strong> Price stalling while CVD keeps rising = accumulation (bullish)</li>
+          </ul>
+          
+          <h3>⚖️ Order Book Imbalance</h3>
+          <p>
+            Shows the balance between total bid value and ask value in the order book:
+          </p>
+          <ul>
+            <li><strong style={{ color: '#16a34a' }}>Bid Heavy (&gt;55% bids):</strong> More buy orders than sell orders - bullish bias</li>
+            <li><strong style={{ color: '#ef4444' }}>Ask Heavy (&gt;55% asks):</strong> More sell orders than buy orders - bearish bias</li>
+            <li><strong>Balanced:</strong> Neither side dominates - watch for breakout direction</li>
+          </ul>
+        </Section>
+
+        {/* Market Data Section */}
+        <Section title="💹 Market Data Features" expanded={expandedSection === 'marketdata'} onToggle={() => toggleSection('marketdata')}>
+          <h3>📊 Long/Short Ratio</h3>
+          <p>
+            Shows the percentage of traders positioned long vs short. Available for both Binance and Bybit.
+          </p>
+          <ul>
+            <li><strong>Visual Bar:</strong> Green portion = longs, red portion = shorts</li>
+            <li><strong>Ratio Value:</strong> L/S ratio (e.g., 1.08 = 8% more longs than shorts)</li>
+            <li><strong>Sentiment Label:</strong> Very Bullish / Bullish / Neutral / Bearish / Very Bearish</li>
+            <li><strong>Contrarian Warning:</strong> Appears when ratio is extreme (&gt;2 or &lt;0.5), indicating potential squeeze risk</li>
+          </ul>
+          <p><strong>Trading Tip:</strong> Extreme L/S ratios often precede reversals. If everyone is long, who's left to buy?</p>
+          
+          <h3>💧 Liquidation Heatmap</h3>
+          <p>
+            Real-time tracking of forced liquidations, aggregated by price level. Helps identify:
+          </p>
+          <ul>
+            <li><strong>Cascade Zones:</strong> Price levels with heavy liquidations can trigger more liquidations</li>
+            <li><strong>Squeeze Potential:</strong> Clusters of liquidations above/below price indicate squeeze risk</li>
+            <li><strong>Support/Resistance:</strong> Levels where many positions were liquidated often become key levels</li>
+          </ul>
+          
+          <h4>Liquidation Types:</h4>
+          <ul>
+            <li><strong style={{ color: '#16a34a' }}>Long Liquidations (🟢):</strong> Longs forced to sell - occurs when price drops</li>
+            <li><strong style={{ color: '#ef4444' }}>Short Liquidations (🔴):</strong> Shorts forced to buy - occurs when price rises</li>
+          </ul>
+          
+          <h4>Reading the Heatmap:</h4>
+          <ul>
+            <li><strong>Bar Width:</strong> Proportional to liquidation volume at that level</li>
+            <li><strong>Intensity:</strong> Brighter colors = more liquidations</li>
+            <li><strong>Current Price Indicator:</strong> Blue highlight shows where current price is relative to liquidation levels</li>
+          </ul>
+          
+          <h3>💰 Funding Rate</h3>
+          <p>
+            Perpetual futures funding rate and next funding time. Shown in the Overview tab.
+          </p>
+          <ul>
+            <li><strong>Positive Funding:</strong> Longs pay shorts - market is bullish (can be contrarian bearish signal at extremes)</li>
+            <li><strong>Negative Funding:</strong> Shorts pay longs - market is bearish (can be contrarian bullish signal at extremes)</li>
+            <li><strong>Annualized Rate:</strong> Funding rate × 3 × 365 to show yearly equivalent</li>
+          </ul>
+          
+          <h3>📰 News Integration</h3>
+          <p>
+            Real-time crypto news from CryptoCompare API, filtered by symbol.
+          </p>
+          <ul>
+            <li>Searches for symbol-specific news in title, tags, and content</li>
+            <li>Falls back to general crypto market news if no specific articles found</li>
+            <li>Click article titles to open full story in new tab</li>
+          </ul>
+          
+          <h3>📈 Open Interest Tracking</h3>
+          <p>
+            Monitors changes in open interest (total outstanding contracts) over time.
+          </p>
+          <ul>
+            <li><strong>OI Trend Chart:</strong> Visual history of open interest changes</li>
+            <li><strong>OI Delta Column:</strong> Percentage change in OI (in main screener table)</li>
+          </ul>
+          <p><strong>OI + Price Interpretation:</strong></p>
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '10px' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #1f2a37' }}>
+                <th style={{ textAlign: 'left', padding: '8px', color: '#7d8aa5' }}>Price</th>
+                <th style={{ textAlign: 'left', padding: '8px', color: '#7d8aa5' }}>OI</th>
+                <th style={{ textAlign: 'left', padding: '8px', color: '#7d8aa5' }}>Interpretation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td style={{ padding: '8px' }}>↑ Rising</td><td style={{ padding: '8px' }}>↑ Rising</td><td style={{ padding: '8px', color: '#16a34a' }}>Strong uptrend (new longs entering)</td></tr>
+              <tr><td style={{ padding: '8px' }}>↓ Falling</td><td style={{ padding: '8px' }}>↑ Rising</td><td style={{ padding: '8px', color: '#ef4444' }}>Strong downtrend (new shorts entering)</td></tr>
+              <tr><td style={{ padding: '8px' }}>↑ Rising</td><td style={{ padding: '8px' }}>↓ Falling</td><td style={{ padding: '8px', color: '#7d8aa5' }}>Weak rally (shorts covering)</td></tr>
+              <tr><td style={{ padding: '8px' }}>↓ Falling</td><td style={{ padding: '8px' }}>↓ Falling</td><td style={{ padding: '8px', color: '#7d8aa5' }}>Weak decline (longs exiting)</td></tr>
+            </tbody>
+          </table>
+        </Section>
+
         {/* Indicators Explained */}
-        <Section title="Indicators Explained" expanded={expandedSection === 'indicators'} onToggle={() => toggleSection('indicators')}>
+        <Section title="📊 Indicators Explained" expanded={expandedSection === 'indicators'} onToggle={() => toggleSection('indicators')}>
           <h3>Signal Score (Composite)</h3>
           <p>
             The Signal Score combines multiple factors into a single 0-100 rating. It weighs:
@@ -146,7 +464,7 @@ export default function About() {
         </Section>
 
         {/* FAQ Section */}
-        <Section title="Frequently Asked Questions" expanded={expandedSection === 'faq'} onToggle={() => toggleSection('faq')}>
+        <Section title="❓ Frequently Asked Questions" expanded={expandedSection === 'faq'} onToggle={() => toggleSection('faq')}>
           <div style={{ display: 'grid', gap: '20px' }}>
             <FAQ
               question="What's the difference between Signal Score and Impulse Score?"
@@ -200,7 +518,7 @@ export default function About() {
         </Section>
 
         {/* Troubleshooting Section */}
-        <Section title="Troubleshooting" expanded={expandedSection === 'troubleshooting'} onToggle={() => toggleSection('troubleshooting')}>
+        <Section title="🔧 Troubleshooting" expanded={expandedSection === 'troubleshooting'} onToggle={() => toggleSection('troubleshooting')}>
           <h3>No data showing / Status shows 'Disconnected'</h3>
           <ul>
             <li>Check that the backend is running (should be on port 8000)</li>
@@ -253,7 +571,7 @@ export default function About() {
         </Section>
 
         {/* Best Practices Section */}
-        <Section title="Best Practices & Tips" expanded={expandedSection === 'tips'} onToggle={() => toggleSection('tips')}>
+        <Section title="💡 Best Practices & Tips" expanded={expandedSection === 'tips'} onToggle={() => toggleSection('tips')}>
           <h3>Finding High-Probability Setups</h3>
           <ol>
             <li>Start with Signal Score filter (&gt;70) to narrow down opportunities</li>
@@ -304,7 +622,7 @@ export default function About() {
         </Section>
 
         {/* Technical Details */}
-        <Section title="Technical Details" expanded={expandedSection === 'technical'} onToggle={() => toggleSection('technical')}>
+        <Section title="⚙️ Technical Details" expanded={expandedSection === 'technical'} onToggle={() => toggleSection('technical')}>
           <h3>Architecture</h3>
           <p>
             <strong>Frontend:</strong> Next.js (React) with TypeScript, real-time WebSocket updates<br />
@@ -346,19 +664,19 @@ export default function About() {
 function Section({ title, expanded, onToggle, children }: { title: string; expanded: boolean; onToggle: () => void; children: React.ReactNode }) {
   return (
     <div style={{ 
-      border: '1px solid #333', 
-      borderRadius: '8px', 
+      border: '1px solid #1f2a37', 
+      borderRadius: '12px', 
       overflow: 'hidden',
-      backgroundColor: '#1a1a1a'
+      backgroundColor: '#111823'
     }}>
       <button
         onClick={onToggle}
         style={{
           width: '100%',
           padding: '15px 20px',
-          background: '#252525',
+          background: 'linear-gradient(180deg, #1b2635, #111826)',
           border: 'none',
-          color: '#fff',
+          color: '#e6edf3',
           fontSize: '18px',
           fontWeight: 'bold',
           textAlign: 'left',
@@ -369,7 +687,7 @@ function Section({ title, expanded, onToggle, children }: { title: string; expan
         }}
       >
         {title}
-        <span style={{ fontSize: '20px' }}>{expanded ? '−' : '+'}</span>
+        <span style={{ fontSize: '20px', color: '#4cc9f0' }}>{expanded ? '−' : '+'}</span>
       </button>
       {expanded && (
         <div style={{ padding: '20px', lineHeight: '1.6' }}>
@@ -383,8 +701,8 @@ function Section({ title, expanded, onToggle, children }: { title: string; expan
 function Term({ term, definition }: { term: string; definition: string }) {
   return (
     <div>
-      <strong style={{ color: '#4a9eff', fontSize: '16px' }}>{term}</strong>
-      <p style={{ margin: '5px 0 0 0', color: '#ccc' }}>{definition}</p>
+      <strong style={{ color: '#4cc9f0', fontSize: '16px' }}>{term}</strong>
+      <p style={{ margin: '5px 0 0 0', color: '#7d8aa5' }}>{definition}</p>
     </div>
   );
 }
@@ -392,8 +710,25 @@ function Term({ term, definition }: { term: string; definition: string }) {
 function FAQ({ question, answer }: { question: string; answer: string }) {
   return (
     <div>
-      <h4 style={{ color: '#4a9eff', marginBottom: '8px' }}>Q: {question}</h4>
-      <p style={{ margin: '0', color: '#ccc', paddingLeft: '20px' }}>A: {answer}</p>
+      <h4 style={{ color: '#4cc9f0', marginBottom: '8px' }}>Q: {question}</h4>
+      <p style={{ margin: '0', color: '#7d8aa5', paddingLeft: '20px' }}>A: {answer}</p>
+    </div>
+  );
+}
+
+function FeatureCard({ icon, title, description }: { icon: string; title: string; description: string }) {
+  return (
+    <div style={{ 
+      background: 'linear-gradient(180deg, #101825, #0c131e)', 
+      borderRadius: '12px', 
+      padding: '15px',
+      border: '1px solid #1f2a37'
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+        <span style={{ fontSize: '24px' }}>{icon}</span>
+        <strong style={{ color: '#e6edf3', fontSize: '14px' }}>{title}</strong>
+      </div>
+      <p style={{ margin: 0, color: '#7d8aa5', fontSize: '13px', lineHeight: '1.5' }}>{description}</p>
     </div>
   );
 }
