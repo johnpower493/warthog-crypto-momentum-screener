@@ -1,4 +1,8 @@
-Windows quickstart:
+# 🍋 Squeeze Screener
+
+A professional-grade cryptocurrency trading platform with real-time market data, order flow analysis, and liquidation tracking.
+
+## Windows Quickstart
 
 Backend
 1) Create venv and install deps

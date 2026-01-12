@@ -871,6 +871,53 @@ export default function Home() {
 
   return (
     <div className="container">
+      {/* Top Navigation Header - Desktop only */}
+      <header className="desktop-header" style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '10px 16px',
+        background: 'linear-gradient(180deg, #0f1520 0%, #0b0f14 100%)',
+        borderBottom: '1px solid #1f2a37'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontWeight: 700, fontSize: 18 }}>🍋 Squeeze</span>
+          <span style={{ fontSize: 11, color: '#4cc9f0', padding: '2px 8px', background: 'rgba(76,201,240,0.1)', borderRadius: 4 }}>Screener</span>
+        </div>
+        <nav style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          {[
+            { href: '/alerts', label: 'History' },
+            { href: '/feed', label: 'Feed' },
+            { href: '/analysis', label: 'Analysis' },
+            { href: '/portfolio', label: 'Portfolio' },
+            { href: '/about', label: 'About' }
+          ].map(({ href, label }) => (
+            <a
+              key={href}
+              href={href}
+              style={{
+                padding: '8px 14px',
+                fontSize: 13,
+                color: '#7d8aa5',
+                textDecoration: 'none',
+                borderRadius: 6,
+                transition: 'all 0.15s ease'
+              }}
+              onMouseEnter={(e) => { 
+                e.currentTarget.style.background = 'rgba(76,201,240,0.1)'; 
+                e.currentTarget.style.color = '#e6edf3'; 
+              }}
+              onMouseLeave={(e) => { 
+                e.currentTarget.style.background = 'transparent'; 
+                e.currentTarget.style.color = '#7d8aa5'; 
+              }}
+            >
+              {label}
+            </a>
+          ))}
+        </nav>
+      </header>
+
       {/* Reconnection Banner */}
       {(isReconnecting || status === 'disconnected') && (
         <div className="reconnect-banner">
@@ -1017,21 +1064,6 @@ export default function Home() {
             <button className={"button "+(showAlerts? 'buttonActive':'')} onClick={()=>setShowAlerts(v=>!v)} title="Toggle Alert Log">
               Alerts
             </button>
-            <a className="button" href="/alerts" title="View persisted alerts history">
-              History
-            </a>
-            <a className="button" href="/feed" title="High quality signals feed">
-              Feed
-            </a>
-            <a className="button" href="/analysis" title="Strategy analysis dashboard">
-              Analysis
-            </a>
-            <a className="button" href="/portfolio" title="Track your positions & PnL">
-              Portfolio
-            </a>
-            <a className="button" href="/about" title="Help & documentation">
-              About
-            </a>
             <button className={"button "+(showColumns? 'buttonActive':'')} onClick={()=>setShowColumns(v=>!v)} title="Choose table columns">
               Columns
             </button>
@@ -2221,7 +2253,7 @@ function DetailsModal({
         </div>
         
         {/* Tab Navigation */}
-        <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', padding: '0 8px', background: 'var(--bg-secondary)', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', padding: '0 8px', background: 'var(--bg-secondary)', overflowX: 'auto', overflowY: 'hidden', WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none', msOverflowStyle: 'none' }} className="hide-scrollbar">
           <button 
             className={`button ${activeTab === 'overview' ? '' : ''}`}
             onClick={() => setActiveTab('overview')}

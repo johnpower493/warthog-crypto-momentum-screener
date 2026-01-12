@@ -11,7 +11,7 @@ export default function About() {
     <div style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto', fontFamily: 'system-ui, sans-serif' }}>
       <div style={{ marginBottom: '20px', display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
         <a href="/" className="button">← Back to Screener</a>
-        <h1 style={{ margin: 0, flex: 1 }}>About Warthog Crypto Screener</h1>
+        <h1 style={{ margin: 0, flex: 1 }}>About Squeeze Screener</h1>
         <span style={{ fontSize: '12px', color: '#7d8aa5', padding: '4px 8px', background: '#111823', border: '1px solid #1f2a37', borderRadius: 4 }}>v2.0</span>
       </div>
       
@@ -50,7 +50,7 @@ export default function About() {
         {/* Overview Section */}
         <Section title="📋 Overview" expanded={expandedSection === 'overview'} onToggle={() => toggleSection('overview')}>
           <p>
-            Warthog is a professional-grade cryptocurrency trading platform that combines real-time market data, 
+            Squeeze Screener is a professional-grade cryptocurrency trading platform that combines real-time market data, 
             advanced technical indicators, and institutional-level order flow analysis. It monitors multiple exchanges 
             (Binance, Bybit) and provides actionable insights for both scalping and swing trading.
           </p>
@@ -104,7 +104,7 @@ export default function About() {
             />
           </div>
 
-          <h3 style={{ marginTop: '20px' }}>🏆 What Makes Warthog Different</h3>
+          <h3 style={{ marginTop: '20px' }}>🏆 What Makes Squeeze Different</h3>
           <ul>
             <li><strong>Institutional-level data:</strong> Order flow, liquidations, and order book analysis typically only available in expensive platforms</li>
             <li><strong>Real-time everything:</strong> All data streams via WebSocket - no polling or delays</li>
@@ -253,7 +253,7 @@ export default function About() {
           
           <h3>🛡️ Order Book Walls</h3>
           <p>
-            Walls are large resting limit orders that act as support or resistance. Warthog detects these in real-time 
+            Walls are large resting limit orders that act as support or resistance. Squeeze Screener detects these in real-time 
             from the live order book and displays them in two categories:
           </p>
           <div style={{ marginLeft: '20px', marginBottom: '15px' }}>

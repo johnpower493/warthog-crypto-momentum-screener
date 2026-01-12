@@ -1,4 +1,4 @@
-# Backend
+# 🍋 Squeeze Screener - Backend
 
 ## Alerting (Telegram/Discord)
 

@@ -370,7 +370,7 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 ## License & Disclaimer
 
-This feature is part of the Warthog Crypto Momentum Screener project.
+This feature is part of the Squeeze Screener project.
 
 **Disclaimer**: Order flow analysis is a tool, not a crystal ball. It shows what traders *are doing* (not what they *will do*). Always combine with other analysis (price action, support/resistance, context). Not financial advice.
 

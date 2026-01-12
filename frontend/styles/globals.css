@@ -120,6 +120,9 @@ a{color:inherit}
 .chgUp{color:var(--up);}
 .chgDown{color:var(--down);}
 .muted{color:var(--muted)}
+
+/* Hide scrollbar utility */
+.hide-scrollbar::-webkit-scrollbar{display:none}
 .momentumStrong{color:#10b981;font-weight:600}
 .momentumWeak{color:#f43f5e;font-weight:600}
 .signalStrongBull{color:#10b981;font-weight:700;font-size:14px}
@@ -206,6 +209,11 @@ a{color:inherit}
   }
 }
 
+/* Desktop Header Navigation */
+.desktop-header {
+  display: flex;
+}
+
 /* Mobile Navigation */
 .mobile-nav {
   position: fixed;
@@ -222,7 +230,8 @@ a{color:inherit}
   backdrop-filter: blur(10px);
 }
 
-.mobile-nav a {
+.mobile-nav a,
+.mobile-nav button {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -232,17 +241,28 @@ a{color:inherit}
   font-weight: 600;
   gap: 2px;
   transition: color 0.2s;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
 }
 
-.mobile-nav a:hover, .mobile-nav a.active {
-  color: #3b82f6;
+.mobile-nav a:hover, .mobile-nav a.active,
+.mobile-nav button:hover, .mobile-nav button.active {
+  color: #4cc9f0;
 }
 
-.mobile-nav a span.icon {
+.mobile-nav a span.icon,
+.mobile-nav button span.icon {
   font-size: 20px;
 }
 
 @media (max-width: 768px) {
+  /* Hide desktop header on mobile */
+  .desktop-header {
+    display: none !important;
+  }
+  
   .mobile-nav {
     display: flex !important;
   }
