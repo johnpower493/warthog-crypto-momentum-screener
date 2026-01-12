@@ -1,23 +1,28 @@
 """
-Bybit Liquidations WebSocket Stream
+Binance Liquidations WebSocket Stream
 
-Subscribes to the public liquidation topic to receive real-time forced liquidation events.
+Subscribes to the public forceOrder stream to receive real-time forced liquidation events.
 No API key required - this is public data.
 
-Bybit v5 WebSocket: wss://stream.bybit.com/v5/public/linear
-Topic: liquidation.<symbol>
+Binance Futures WebSocket: wss://fstream.binance.com/stream
+Stream: !forceOrder@arr (all symbols) or <symbol>@forceOrder (single symbol)
 
 Message format:
 {
-    "topic": "liquidation.BTCUSDT",
-    "type": "snapshot",
-    "ts": 1234567890123,
-    "data": {
-        "symbol": "BTCUSDT",
-        "side": "Buy",      # Buy = short liquidated, Sell = long liquidated
-        "size": "0.5",
-        "price": "50000.00",
-        "updatedTime": 1234567890123
+    "e": "forceOrder",          // Event Type
+    "E": 1568014460893,         // Event Time
+    "o": {
+        "s": "BTCUSDT",         // Symbol
+        "S": "SELL",            // Side (SELL = long liquidated, BUY = short liquidated)
+        "o": "LIMIT",           // Order Type
+        "f": "IOC",             // Time in Force
+        "q": "0.014",           // Original Quantity
+        "p": "9910",            // Price
+        "ap": "9910",           // Average Price
+        "X": "FILLED",          // Order Status
+        "l": "0.014",           // Order Last Filled Quantity
+        "z": "0.014",           // Order Filled Accumulated Quantity
+        "T": 1568014460893      // Order Trade Time
     }
 }
 """
@@ -27,12 +32,12 @@ import asyncio
 import json
 import logging
 import time
-from typing import AsyncIterator, Dict, List, Any, Optional
+from typing import AsyncIterator, Dict, List, Any, Optional, Set
 from collections import deque
 
 import websockets
 
-from ..config import BYBIT_WS_LINEAR, WS_PING_INTERVAL
+from ..config import BINANCE_FUTURES_WS, WS_PING_INTERVAL
 
 log = logging.getLogger(__name__)
 
@@ -104,12 +109,20 @@ def _get_price_bucket(price: float, bucket_size: float) -> float:
 
 
 def _calculate_bucket_size(price: float) -> float:
-    """Calculate appropriate bucket size based on price magnitude."""
+    """Calculate appropriate bucket size based on price magnitude.
+    
+    For BTC (~100k): bucket = $100
+    For ETH (~3k): bucket = $5
+    For small alts (~0.01): bucket = $0.0001
+    """
     if price <= 0:
         return 0.01
     
-    import math
+    # Use ~0.1% of price as bucket size, rounded to nice numbers
     raw_bucket = price * 0.001
+    
+    # Round to nearest power of 10 with nice multipliers
+    import math
     magnitude = 10 ** math.floor(math.log10(raw_bucket))
     normalized = raw_bucket / magnitude
     
@@ -133,12 +146,15 @@ def _aggregate_liquidation_level(symbol: str, liq: Dict[str, Any]) -> None:
     if price <= 0 or value_usd <= 0:
         return
     
+    # Initialize symbol store if needed
     if symbol not in _liquidation_levels:
         _liquidation_levels[symbol] = {}
     
+    # Calculate bucket size based on price
     bucket_size = _calculate_bucket_size(price)
     bucket = _get_price_bucket(price, bucket_size)
     
+    # Initialize or update bucket
     if bucket not in _liquidation_levels[symbol]:
         _liquidation_levels[symbol][bucket] = {
             "long_value": 0,
@@ -165,7 +181,23 @@ def _aggregate_liquidation_level(symbol: str, liq: Dict[str, Any]) -> None:
 
 
 def get_liquidation_levels(symbol: str, current_price: float = 0, range_pct: float = 5.0) -> List[Dict[str, Any]]:
-    """Get liquidation levels for heatmap display."""
+    """Get liquidation levels for heatmap display.
+    
+    Args:
+        symbol: Trading pair symbol
+        current_price: Current price to filter levels around (0 = no filter)
+        range_pct: Percentage range around current price to include (default 5%)
+    
+    Returns:
+        List of price levels sorted by price, each containing:
+        - price: The bucket price level
+        - long_value: Total USD value of long liquidations at this level
+        - short_value: Total USD value of short liquidations at this level
+        - total_value: Combined value
+        - long_count: Number of long liquidations
+        - short_count: Number of short liquidations
+        - intensity: Normalized intensity 0-1 for heatmap coloring
+    """
     if symbol not in _liquidation_levels:
         return []
     
@@ -173,12 +205,15 @@ def get_liquidation_levels(symbol: str, current_price: float = 0, range_pct: flo
     levels = []
     max_value = 0
     
+    # Clean up expired levels and collect valid ones
     expired_buckets = []
     for bucket, data in _liquidation_levels[symbol].items():
+        # Remove levels older than expiry time
         if now_ms - data["last_ts"] > _LEVEL_EXPIRY_MS:
             expired_buckets.append(bucket)
             continue
         
+        # Filter by price range if current_price provided
         if current_price > 0:
             price_diff_pct = abs(bucket - current_price) / current_price * 100
             if price_diff_pct > range_pct:
@@ -197,23 +232,47 @@ def get_liquidation_levels(symbol: str, current_price: float = 0, range_pct: flo
         levels.append(level_data)
         max_value = max(max_value, data["total_value"])
     
+    # Clean up expired buckets
     for bucket in expired_buckets:
         del _liquidation_levels[symbol][bucket]
     
+    # Calculate intensity for each level (normalized 0-1)
     if max_value > 0:
         for level in levels:
             level["intensity"] = level["total_value"] / max_value
     
+    # Sort by price ascending
     levels.sort(key=lambda x: x["price"])
+    
     return levels
 
 
-async def stream_liquidations(symbol: str) -> AsyncIterator[dict]:
-    """Yield normalized liquidation events for a single Bybit linear perp symbol.
+def clear_liquidation_levels(symbol: str = None) -> None:
+    """Clear liquidation levels cache.
+    
+    Args:
+        symbol: Specific symbol to clear, or None to clear all
+    """
+    global _liquidation_levels
+    if symbol:
+        if symbol in _liquidation_levels:
+            del _liquidation_levels[symbol]
+    else:
+        _liquidation_levels = {}
+
+
+async def stream_all_liquidations(symbols: Optional[Set[str]] = None) -> AsyncIterator[dict]:
+    """Yield normalized liquidation events for all Binance USDT perpetual symbols.
+
+    Uses the !forceOrder@arr stream which provides liquidations for ALL symbols
+    in a single connection (much more efficient than per-symbol connections).
+
+    Args:
+        symbols: Optional set of symbols to filter. If None, yields all liquidations.
 
     Normalized event:
       {
-        "exchange": "bybit",
+        "exchange": "binance",
         "symbol": "BTCUSDT",
         "ts": 173... (ms),
         "price": float,
@@ -221,19 +280,18 @@ async def stream_liquidations(symbol: str) -> AsyncIterator[dict]:
         "value_usd": float,
         "side": "BUY"|"SELL"  # BUY = short liquidated, SELL = long liquidated
       }
-
-    Bybit v5 public liquidation topic: liquidation.<symbol>
     """
 
-    topic = f"liquidation.{symbol}"
-    url = BYBIT_WS_LINEAR
+    # Use the all-symbols liquidation stream - much more efficient
+    stream = "!forceOrder@arr"
+    url = f"{BINANCE_FUTURES_WS}?streams={stream}"
 
     backoff = 1.0
     attempt = 0
     while True:
         try:
             attempt += 1
-            log.info(f"Bybit liquidations WS connect {symbol} (attempt {attempt})")
+            log.info(f"Binance liquidations WS connect (all symbols, attempt {attempt})")
             async with websockets.connect(
                 url,
                 ping_interval=WS_PING_INTERVAL,
@@ -242,54 +300,44 @@ async def stream_liquidations(symbol: str) -> AsyncIterator[dict]:
                 max_queue=4096,
             ) as ws:
                 backoff = 1.0
-                sub = {"op": "subscribe", "args": [topic]}
-                await ws.send(json.dumps(sub))
-
+                log.info("Binance liquidations stream connected")
+                
                 async for message in ws:
                     try:
                         data = json.loads(message)
-                        if not isinstance(data, dict):
+                        
+                        # Handle combined stream format
+                        payload = data.get("data") if isinstance(data, dict) else None
+                        if not payload:
                             continue
                         
-                        # Check for subscription confirmation
-                        if data.get("op") == "subscribe":
-                            if data.get("success"):
-                                log.info(f"Bybit liquidations subscribed to {topic}")
-                            else:
-                                # Subscription failed - likely unsupported symbol
-                                ret_msg = data.get("ret_msg", "")
-                                if "handler not found" in ret_msg:
-                                    log.debug(f"Bybit liquidations not available for {symbol} (not supported)")
-                                    # Exit the stream for this symbol - no point retrying
-                                    return
-                                else:
-                                    log.warning(f"Bybit liquidations subscription failed: {data}")
+                        # Check event type
+                        if payload.get("e") != "forceOrder":
                             continue
                         
-                        if data.get("topic") != topic:
+                        order = payload.get("o", {})
+                        if not order:
                             continue
                         
-                        liq_data = data.get("data", {})
-                        if not liq_data:
+                        symbol = order.get("s", "")
+                        
+                        # Filter by symbols if provided
+                        if symbols and symbol not in symbols:
                             continue
                         
-                        # Parse liquidation event
-                        ts = int(liq_data.get("updatedTime") or data.get("ts") or 0)
-                        price = float(liq_data.get("price", 0))
-                        qty = float(liq_data.get("size", 0))
+                        # Parse liquidation data
+                        price = float(order.get("ap") or order.get("p") or 0)  # Average price or limit price
+                        qty = float(order.get("z") or order.get("q") or 0)  # Filled qty or original qty
+                        ts = int(order.get("T") or payload.get("E") or 0)
                         
-                        # Bybit: "Buy" = short position liquidated (market buys to close)
-                        #        "Sell" = long position liquidated (market sells to close)
-                        side_raw = (liq_data.get("side") or "").capitalize()
-                        if side_raw == "Buy":
-                            side = "BUY"  # Short liquidated
-                        elif side_raw == "Sell":
-                            side = "SELL"  # Long liquidated
-                        else:
+                        # Side: SELL = long position liquidated, BUY = short position liquidated
+                        side = order.get("S", "")
+                        
+                        if not symbol or not price or not qty:
                             continue
                         
                         normalized = {
-                            "exchange": "bybit",
+                            "exchange": "binance",
                             "symbol": symbol,
                             "ts": ts,
                             "timestamp": ts,
@@ -297,57 +345,54 @@ async def stream_liquidations(symbol: str) -> AsyncIterator[dict]:
                             "qty": qty,
                             "value_usd": price * qty,
                             "side": side,
-                            "source": "bybit_ws"
+                            "status": order.get("X", ""),
+                            "source": "binance_ws"
                         }
                         
                         # Store in memory for REST API access
                         _store_liquidation(symbol, normalized)
                         
+                        # Log significant liquidations (> $100k)
+                        if normalized["value_usd"] > 100_000:
+                            side_label = "LONG" if side == "SELL" else "SHORT"
+                            log.info(f"Large {side_label} liquidation: {symbol} ${normalized['value_usd']:,.0f} @ {price}")
+                        
                         yield normalized
                         
                     except Exception as e:
-                        log.debug(f"Bybit liquidations parse error: {e}")
+                        log.debug(f"Binance liquidations parse error: {e}")
                         continue
                         
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            log.warning(f"Bybit liquidations WS error {symbol}: {type(e).__name__}: {e} (reconnect {backoff:.1f}s)")
+            log.warning(f"Binance liquidations WS error: {type(e).__name__}: {e} (reconnect {backoff:.1f}s)")
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 20)
 
 
-async def run_liquidation_collector(symbols: List[str]) -> None:
-    """Run liquidation collectors for multiple symbols.
+async def run_liquidation_collector(symbols: Optional[List[str]] = None) -> None:
+    """Run liquidation collector for all Binance symbols.
     
     This is a long-running task that collects liquidations in the background
     and stores them in memory for the REST API to access.
+    
+    Args:
+        symbols: Optional list of symbols to filter. If None, collects all liquidations.
     """
-    if not symbols:
-        return
+    symbols_set = set(symbols) if symbols else None
     
-    log.info(f"Starting Bybit liquidation collectors for {len(symbols)} symbols")
-    
-    async def collect_for_symbol(symbol: str):
-        """Collect liquidations for a single symbol."""
-        try:
-            async for liq in stream_liquidations(symbol):
-                # Event is already stored in _store_liquidation
-                # Log significant liquidations (> $100k)
-                if liq.get("value_usd", 0) > 100_000:
-                    side_label = "LONG" if liq["side"] == "SELL" else "SHORT"
-                    log.info(f"Large {side_label} liquidation: {symbol} ${liq['value_usd']:,.0f} @ {liq['price']}")
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            log.error(f"Liquidation collector error for {symbol}: {e}")
-    
-    # Run all collectors concurrently
-    tasks = [asyncio.create_task(collect_for_symbol(s)) for s in symbols]
+    log.info(f"Starting Binance liquidation collector" + 
+             (f" for {len(symbols_set)} symbols" if symbols_set else " for all symbols"))
     
     try:
-        await asyncio.gather(*tasks)
+        async for liq in stream_all_liquidations(symbols_set):
+            # Event is already stored in _store_liquidation
+            # Just consume the stream
+            pass
     except asyncio.CancelledError:
-        for t in tasks:
-            t.cancel()
+        log.info("Binance liquidations collector cancelled")
+        raise
+    except Exception as e:
+        log.error(f"Binance liquidation collector error: {e}")
         raise

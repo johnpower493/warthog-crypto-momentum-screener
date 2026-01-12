@@ -31,10 +31,27 @@ class StreamManager:
         self._task_bin_oi: Optional[asyncio.Task] = None
         self._task_bybit_oi: Optional[asyncio.Task] = None
         self._task_bybit_liquidations: Optional[asyncio.Task] = None
+        self._task_binance_liquidations: Optional[asyncio.Task] = None
+        self._task_cache_persist: Optional[asyncio.Task] = None
 
     async def start(self):
         import logging
         log = logging.getLogger(__name__)
+        
+        # INSTANT STARTUP: Load cached snapshots first so UI has data immediately
+        log.info("Loading cached snapshots for instant startup...")
+        binance_cached = self.agg.load_from_cache()
+        bybit_cached = self.agg_bybit.load_from_cache()
+        
+        if binance_cached or bybit_cached:
+            log.info(f"Instant startup: Binance={binance_cached}, Bybit={bybit_cached}")
+            # Emit cached snapshots immediately so frontend gets data right away
+            if binance_cached:
+                await self.agg.heartbeat_emit()
+            if bybit_cached:
+                await self.agg_bybit.heartbeat_emit()
+        else:
+            log.info("No valid cache found, will backfill from APIs")
         
         if not self._task or self._task.done():
             if self._task and self._task.done():
@@ -137,6 +154,17 @@ class StreamManager:
         if not self._task_bybit_liquidations or self._task_bybit_liquidations.done():
             log.info("Starting Bybit liquidations stream...")
             self._task_bybit_liquidations = asyncio.create_task(self._run_bybit_liquidations(syms_bybit))
+        
+        # Start Binance liquidations WebSocket collector (single connection for all symbols)
+        if not self._task_binance_liquidations or self._task_binance_liquidations.done():
+            log.info("Starting Binance liquidations stream...")
+            self._task_binance_liquidations = asyncio.create_task(self._run_binance_liquidations(syms_bin))
+        
+        # Start periodic cache persistence for instant startup
+        if not self._task_cache_persist or self._task_cache_persist.done():
+            log.info("Starting snapshot cache persistence task...")
+            self._task_cache_persist = asyncio.create_task(self._run_cache_persistence())
+        
         # start watchdogs
         self._wd_bin = StreamWatchdog(
             name="binance_kline",
@@ -559,15 +587,22 @@ class StreamManager:
         
         Only subscribes to top N symbols by volume to avoid too many connections.
         Liquidations are stored in memory and accessible via the market_data service.
+        
+        Note: Bybit liquidation streams are only available for major USDT perpetual symbols.
+        Symbols like "4USDT" or other non-standard symbols will be skipped.
         """
         import logging
         log = logging.getLogger(__name__)
         
+        # Filter to valid USDT perpetual symbols (must end with USDT and have reasonable length)
+        # This filters out symbols like "4USDT" which aren't valid
+        valid_symbols = [s for s in symbols if s.endswith('USDT') and len(s) >= 6]
+        
         # Limit to top 50 symbols to avoid overwhelming connections
         # Liquidations are most important for high-volume symbols
-        top_symbols = symbols[:50] if len(symbols) > 50 else symbols
+        top_symbols = valid_symbols[:50] if len(valid_symbols) > 50 else valid_symbols
         
-        log.info(f"Starting Bybit liquidations collectors for {len(top_symbols)} symbols")
+        log.info(f"Starting Bybit liquidations collectors for {len(top_symbols)} symbols (filtered from {len(symbols)})")
         
         try:
             from ..exchanges.bybit_liquidations_ws import run_liquidation_collector
@@ -579,8 +614,74 @@ class StreamManager:
             log.error(f"Bybit liquidations stream error: {e}", exc_info=True)
             raise
 
+    async def _run_binance_liquidations(self, symbols: list):
+        """Run Binance liquidations WebSocket collector.
+        
+        Uses a single connection to receive ALL liquidations via !forceOrder@arr stream,
+        which is much more efficient than per-symbol connections.
+        Liquidations are stored in memory and accessible via the market_data service.
+        """
+        import logging
+        log = logging.getLogger(__name__)
+        
+        # Convert to set for filtering (optional - can be None to get all)
+        symbols_set = set(symbols) if symbols else None
+        
+        log.info(f"Starting Binance liquidations collector" + 
+                 (f" for {len(symbols_set)} symbols" if symbols_set else " for all symbols"))
+        
+        try:
+            from ..exchanges.binance_liquidations_ws import run_liquidation_collector
+            await run_liquidation_collector(symbols)
+        except asyncio.CancelledError:
+            log.info("Binance liquidations stream cancelled")
+            raise
+        except Exception as e:
+            log.error(f"Binance liquidations stream error: {e}", exc_info=True)
+            raise
+
+    async def _run_cache_persistence(self):
+        """Periodically persist snapshots to SQLite for instant startup.
+        
+        Runs every 30 seconds to keep the cache fresh. On next startup,
+        the cached snapshot will be loaded immediately so users see data
+        without waiting for the WebSocket backfill.
+        """
+        import logging
+        log = logging.getLogger(__name__)
+        
+        # Wait a bit for initial data to populate
+        await asyncio.sleep(10)
+        
+        while True:
+            try:
+                # Persist both exchange snapshots
+                if self.agg.state_count() > 0:
+                    self.agg.persist_snapshot_cache()
+                
+                if self.agg_bybit.state_count() > 0:
+                    self.agg_bybit.persist_snapshot_cache()
+                
+            except Exception as e:
+                log.warning(f"Cache persistence error: {e}")
+            
+            # Persist every 30 seconds
+            await asyncio.sleep(30)
+
     async def stop(self):
         """Stop all running tasks and close clients."""
+        # Persist snapshots one final time before shutdown
+        import logging
+        log = logging.getLogger(__name__)
+        log.info("Persisting final snapshots before shutdown...")
+        try:
+            if self.agg.state_count() > 0:
+                self.agg.persist_snapshot_cache()
+            if self.agg_bybit.state_count() > 0:
+                self.agg_bybit.persist_snapshot_cache()
+        except Exception as e:
+            log.warning(f"Failed to persist final snapshots: {e}")
+        
         tasks = [
             self._task,
             self._task_bybit,
@@ -589,6 +690,8 @@ class StreamManager:
             self._task_bin_oi,
             self._task_bybit_oi,
             self._task_bybit_liquidations,
+            self._task_binance_liquidations,
+            self._task_cache_persist,
             getattr(self, "_task_health_monitor", None),
             getattr(self, "_task_full_refresh", None),
         ]

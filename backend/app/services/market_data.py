@@ -184,7 +184,23 @@ async def fetch_liquidations(exchange: str, symbol: str, limit: int = 20) -> Lis
 
 
 async def _fetch_binance_liquidations(symbol: str, limit: int, cache_key: str) -> List[Dict[str, Any]]:
-    """Fetch from Binance Futures API - Force Orders (Liquidations)"""
+    """Fetch from Binance WebSocket store - Recent liquidations
+    
+    Uses the real-time WebSocket stream (!forceOrder@arr) which collects liquidations 
+    in memory. Falls back to REST API if WebSocket store is empty.
+    """
+    # Try WebSocket store first (real-time data)
+    try:
+        from ..exchanges.binance_liquidations_ws import get_recent_liquidations
+        ws_data = get_recent_liquidations(symbol, limit=limit)
+        if ws_data:
+            return ws_data
+    except ImportError:
+        logger.debug("Binance liquidations WebSocket module not available, using REST API")
+    except Exception as e:
+        logger.debug(f"Failed to get Binance liquidations from WS store: {e}")
+    
+    # Fallback to REST API if WebSocket store is empty
     url = "https://fapi.binance.com/fapi/v1/forceOrders"
     params = {
         "symbol": symbol,
@@ -213,7 +229,7 @@ async def _fetch_binance_liquidations(symbol: str, limit: int, cache_key: str) -
                     "qty": qty,
                     "value_usd": price * qty,
                     "timestamp": int(liq.get("time", 0)),
-                    "source": "binance"
+                    "source": "binance_rest"
                 })
             
             # Sort by timestamp desc
@@ -225,25 +241,48 @@ async def _fetch_binance_liquidations(symbol: str, limit: int, cache_key: str) -
 
 
 async def _fetch_bybit_liquidations(symbol: str, limit: int, cache_key: str) -> List[Dict[str, Any]]:
-    """Fetch from Bybit WebSocket store - Recent liquidations
+    """Fetch liquidations for Bybit symbols.
     
-    Bybit doesn't have a REST API for liquidations, so we use the WebSocket stream
-    which collects liquidations in memory. The stream must be running for data to be available.
+    Bybit's liquidation WebSocket doesn't support all symbols reliably,
+    so we fall back to Binance liquidation data since the same trading pairs
+    exist on both exchanges and liquidation patterns are similar.
     """
+    # First try Bybit's own WebSocket store
     try:
         from ..exchanges.bybit_liquidations_ws import get_recent_liquidations
-        return get_recent_liquidations(symbol, limit=limit)
-    except ImportError:
-        logger.warning("Bybit liquidations WebSocket module not available")
-        return []
+        bybit_data = get_recent_liquidations(symbol, limit=limit)
+        if bybit_data:
+            return bybit_data
     except Exception as e:
-        logger.warning(f"Failed to get Bybit liquidations from WS store: {e}")
-        return []
+        logger.debug(f"Bybit liquidations WS not available for {symbol}: {e}")
+    
+    # Fall back to Binance liquidation data for this symbol
+    # Most major trading pairs exist on both exchanges
+    logger.debug(f"Using Binance liquidation data for Bybit symbol {symbol}")
+    try:
+        from ..exchanges.binance_liquidations_ws import get_recent_liquidations as get_binance_liqs
+        binance_data = get_binance_liqs(symbol, limit=limit)
+        if binance_data:
+            # Tag the data as coming from Binance fallback
+            for liq in binance_data:
+                liq["source"] = "binance_fallback"
+            return binance_data
+    except Exception as e:
+        logger.debug(f"Binance fallback liquidations not available for {symbol}: {e}")
+    
+    # Final fallback: try Binance REST API
+    try:
+        binance_cache_key = f"binance:{symbol}"
+        return await _fetch_binance_liquidations(symbol, limit, binance_cache_key)
+    except Exception as e:
+        logger.debug(f"Binance REST fallback failed for {symbol}: {e}")
+    
+    return []
 
 
-async def fetch_market_data_combined(exchange: str, symbol: str) -> Dict[str, Any]:
+async def fetch_market_data_combined(exchange: str, symbol: str, current_price: float = 0) -> Dict[str, Any]:
     """
-    Fetch both L/S ratio and liquidations in parallel.
+    Fetch L/S ratio, liquidations, and liquidation levels in parallel.
     Used by the /symbol/details endpoint.
     """
     ls_task = fetch_long_short_ratio(exchange, symbol)
@@ -261,8 +300,28 @@ async def fetch_market_data_combined(exchange: str, symbol: str) -> Dict[str, An
         "short_liq_value": sum(l.get("value_usd", 0) for l in liq_data if l.get("side") == "BUY"),
     }
     
+    # Get liquidation levels for heatmap (sync call since data is in memory)
+    liq_levels = []
+    try:
+        if exchange == "binance":
+            from ..exchanges.binance_liquidations_ws import get_liquidation_levels
+            liq_levels = get_liquidation_levels(symbol, current_price=current_price, range_pct=5.0)
+        elif exchange == "bybit":
+            # Try Bybit first, then fall back to Binance
+            from ..exchanges.bybit_liquidations_ws import get_liquidation_levels as get_bybit_levels
+            liq_levels = get_bybit_levels(symbol, current_price=current_price, range_pct=5.0)
+            
+            # If no Bybit data, fall back to Binance
+            if not liq_levels:
+                from ..exchanges.binance_liquidations_ws import get_liquidation_levels as get_binance_levels
+                liq_levels = get_binance_levels(symbol, current_price=current_price, range_pct=5.0)
+                logger.debug(f"Using Binance liquidation levels for Bybit symbol {symbol}")
+    except Exception as e:
+        logger.debug(f"Failed to get liquidation levels for {exchange}:{symbol}: {e}")
+    
     return {
         "long_short_ratio": ls_data,
         "liquidations": liq_data[:10],  # Return top 10 most recent
-        "liquidation_summary": liq_summary
+        "liquidation_summary": liq_summary,
+        "liquidation_levels": liq_levels,
     }

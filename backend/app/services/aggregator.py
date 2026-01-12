@@ -227,6 +227,94 @@ class Aggregator:
     def state_count(self) -> int:
         return len(self._states)
 
+    def load_from_cache(self) -> bool:
+        """Load state from SQLite snapshot cache for instant startup.
+        
+        Returns True if cache was loaded successfully.
+        """
+        import logging
+        import json
+        log = logging.getLogger(__name__)
+        
+        try:
+            from .ohlc_store import load_snapshot_cache, get_snapshot_cache_age
+            
+            # Check cache age first
+            age_ms = get_snapshot_cache_age(self.exchange)
+            if age_ms is None:
+                log.info(f"[{self.exchange}] No snapshot cache found")
+                return False
+            
+            # Load with 10 minute max age for startup (we'll refresh soon anyway)
+            cached_json = load_snapshot_cache(self.exchange, max_age_ms=600_000)
+            if not cached_json:
+                log.info(f"[{self.exchange}] Snapshot cache too old ({age_ms/1000:.1f}s)")
+                return False
+            
+            # Parse and restore state
+            data = json.loads(cached_json)
+            metrics = data.get("metrics", [])
+            
+            if not metrics:
+                log.info(f"[{self.exchange}] Snapshot cache empty")
+                return False
+            
+            # Restore basic state for each symbol from cached metrics
+            from ..metrics.calculator import SymbolState
+            restored = 0
+            for m in metrics:
+                symbol = m.get("symbol")
+                if not symbol:
+                    continue
+                
+                state = SymbolState(symbol=symbol, exchange=self.exchange)
+                
+                # Restore key fields that make the UI useful immediately
+                state.last_price = m.get("last_price") or m.get("close") or 0
+                state.open_interest = m.get("open_interest") or 0
+                
+                # Seed all price series consistently if we have a price
+                # This prevents array length mismatches in compute_atr
+                if state.last_price > 0:
+                    state.close_1m.append(state.last_price)
+                    state.high_1m.append(state.last_price)  # Use last_price as approximation
+                    state.low_1m.append(state.last_price)   # Use last_price as approximation
+                    state.open_1m.append(state.last_price)  # Use last_price as approximation
+                
+                self._states[symbol] = state
+                restored += 1
+            
+            # Update cache for immediate serving
+            import time
+            now_ms = int(time.time() * 1000)
+            self._snapshot_cache = cached_json
+            self._snapshot_cache_ts = now_ms
+            
+            log.info(f"[{self.exchange}] Restored {restored} symbols from cache (age: {age_ms/1000:.1f}s)")
+            return restored > 0
+            
+        except Exception as e:
+            log.warning(f"[{self.exchange}] Failed to load snapshot cache: {e}")
+            return False
+
+    def persist_snapshot_cache(self) -> None:
+        """Persist current snapshot to SQLite for instant startup on next run."""
+        import logging
+        log = logging.getLogger(__name__)
+        
+        try:
+            from .ohlc_store import save_snapshot_cache
+            import time
+            
+            # Build and save snapshot
+            payload = self._build_snapshot_payload()
+            ts = int(time.time() * 1000)
+            save_snapshot_cache(self.exchange, ts, payload)
+            
+            log.debug(f"[{self.exchange}] Persisted snapshot cache ({len(self._states)} symbols)")
+        except Exception as e:
+            log.warning(f"[{self.exchange}] Failed to persist snapshot cache: {e}")
+
     def stale_symbols(
         self,
         now_ms: int,

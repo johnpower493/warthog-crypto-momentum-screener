@@ -263,6 +263,17 @@ def init_db(path: str = "ohlc.sqlite3"):
             _CONN.execute("CREATE INDEX IF NOT EXISTS idx_bt_trades_lookup ON backtest_trades(exchange, window_days, created_ts)")
             _CONN.execute("CREATE INDEX IF NOT EXISTS idx_bt_trades_symbol ON backtest_trades(exchange, symbol, window_days)")
 
+            # Snapshot cache for instant startup
+            _CONN.execute(
+                """
+                CREATE TABLE IF NOT EXISTS snapshot_cache (
+                  exchange TEXT PRIMARY KEY,
+                  ts INTEGER NOT NULL,
+                  snapshot_json TEXT NOT NULL
+                )
+                """
+            )
+
             _CONN.commit()
 
 
@@ -392,3 +403,85 @@ def get_after(
         )
         rows = cur.fetchall()
     return rows
+
+
+# ============== Snapshot Cache for Instant Startup ==============
+
+def save_snapshot_cache(exchange: str, ts: int, snapshot_json: str) -> None:
+    """Save a snapshot to the cache for instant startup.
+    
+    Called periodically by the aggregator to persist the latest state.
+    """
+    if _CONN is None:
+        init_db()
+    with _DB_LOCK:
+        _CONN.execute(
+            """
+            INSERT INTO snapshot_cache(exchange, ts, snapshot_json)
+            VALUES(?, ?, ?)
+            ON CONFLICT(exchange) DO UPDATE SET
+              ts=excluded.ts,
+              snapshot_json=excluded.snapshot_json
+            """,
+            (exchange, ts, snapshot_json),
+        )
+        _CONN.commit()
+
+
+def load_snapshot_cache(exchange: str, max_age_ms: int = 300_000) -> Optional[str]:
+    """Load the cached snapshot if it's not too old.
+    
+    Args:
+        exchange: The exchange to load cache for
+        max_age_ms: Maximum age in milliseconds (default 5 minutes)
+        
+    Returns:
+        The cached snapshot JSON string, or None if not found or too old
+    """
+    if _CONN is None:
+        init_db()
+    
+    import time
+    now_ms = int(time.time() * 1000)
+    
+    with _DB_LOCK:
+        cur = _CONN.execute(
+            "SELECT ts, snapshot_json FROM snapshot_cache WHERE exchange = ?",
+            (exchange,),
+        )
+        row = cur.fetchone()
+    
+    if row is None:
+        return None
+    
+    cached_ts, snapshot_json = row
+    age_ms = now_ms - cached_ts
+    
+    if age_ms > max_age_ms:
+        return None
+    
+    return snapshot_json
+
+
+def get_snapshot_cache_age(exchange: str) -> Optional[int]:
+    """Get the age of the cached snapshot in milliseconds.
+    
+    Returns None if no cache exists.
+    """
+    if _CONN is None:
+        init_db()
+    
+    import time
+    now_ms = int(time.time() * 1000)
+    
+    with _DB_LOCK:
+        cur = _CONN.execute(
+            "SELECT ts FROM snapshot_cache WHERE exchange = ?",
+            (exchange,),
+        )
+        row = cur.fetchone()
+    
+    if row is None:
+        return None
+    
+    return now_ms - row[0]

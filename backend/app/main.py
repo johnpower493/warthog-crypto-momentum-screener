@@ -461,6 +461,68 @@ async def get_liquidations(exchange: str, symbol: str, limit: int = 20):
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 
+@app.get("/market_data/liquidation_levels/{exchange}/{symbol}")
+async def get_liquidation_levels(
+    exchange: str, 
+    symbol: str, 
+    current_price: float = 0,
+    range_pct: float = 5.0
+):
+    """Get liquidation levels heatmap data for a symbol.
+    
+    Returns aggregated liquidation data at price levels for visualization.
+    Each level shows total long/short liquidation value at that price bucket.
+    
+    Args:
+        exchange: "binance" or "bybit"
+        symbol: Trading pair (e.g., "BTCUSDT")
+        current_price: Current price to filter levels around (0 = no filter)
+        range_pct: Percentage range around current price to include (default 5%)
+    
+    Returns:
+        List of price levels with liquidation data and intensity for heatmap coloring.
+    """
+    try:
+        levels = []
+        
+        if exchange.lower() == "binance":
+            from .exchanges.binance_liquidations_ws import get_liquidation_levels as get_binance_levels
+            levels = get_binance_levels(symbol, current_price=current_price, range_pct=range_pct)
+        elif exchange.lower() == "bybit":
+            # Try Bybit first, then fall back to Binance data
+            from .exchanges.bybit_liquidations_ws import get_liquidation_levels as get_bybit_levels
+            levels = get_bybit_levels(symbol, current_price=current_price, range_pct=range_pct)
+            
+            # If no Bybit data, use Binance data for the same symbol
+            if not levels:
+                from .exchanges.binance_liquidations_ws import get_liquidation_levels as get_binance_levels
+                levels = get_binance_levels(symbol, current_price=current_price, range_pct=range_pct)
+        else:
+            return {"error": f"Unknown exchange: {exchange}"}
+        
+        # Calculate totals
+        total_long_value = sum(l.get("long_value", 0) for l in levels)
+        total_short_value = sum(l.get("short_value", 0) for l in levels)
+        
+        return {
+            "exchange": exchange,
+            "symbol": symbol,
+            "current_price": current_price,
+            "range_pct": range_pct,
+            "levels": levels,
+            "summary": {
+                "level_count": len(levels),
+                "total_long_value": total_long_value,
+                "total_short_value": total_short_value,
+                "total_value": total_long_value + total_short_value,
+                "bias": "long" if total_long_value > total_short_value else "short" if total_short_value > total_long_value else "neutral"
+            }
+        }
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+
 # ==================== Funding Rate ====================
 
 @app.get("/funding_rate/{exchange}/{symbol}")
@@ -733,6 +795,7 @@ async def symbol_details(exchange: str, symbol: str):
         "long_short_ratio": None,
         "liquidations": [],
         "liquidation_summary": None,
+        "liquidation_levels": [],
     }
     
     # Get history data
@@ -800,6 +863,7 @@ async def symbol_details(exchange: str, symbol: str):
             result["long_short_ratio"] = market_data_result.get("long_short_ratio")
             result["liquidations"] = market_data_result.get("liquidations", [])
             result["liquidation_summary"] = market_data_result.get("liquidation_summary")
+            result["liquidation_levels"] = market_data_result.get("liquidation_levels", [])
     except Exception:
         pass
     
@@ -1497,6 +1561,216 @@ async def ws_screener_bybit(ws: WebSocket):
             await stream_mgr.agg_bybit.unsubscribe(q)  # type: ignore[attr-defined]
         except Exception:
             pass
+
+def _is_valid_bybit_liquidation_symbol(symbol: str) -> bool:
+    """Check if a symbol is valid for Bybit liquidation streaming.
+    
+    Bybit liquidation streams only support major USDT perpetual symbols.
+    Symbols like "4USDT" or other non-standard symbols are not supported.
+    """
+    return symbol.endswith('USDT') and len(symbol) >= 6
+
+
+@app.websocket("/ws/liquidations/{exchange}/{symbol}")
+async def ws_liquidations(websocket: WebSocket, exchange: str, symbol: str):
+    """Real-time liquidation stream for a specific symbol.
+    
+    Streams liquidation events and updated heatmap levels in real-time.
+    Also sends periodic heatmap updates even if no new liquidations occur.
+    
+    Message format:
+    {
+        "type": "liquidation" | "levels_update",
+        "data": {...},
+        "ts": timestamp
+    }
+    """
+    import json
+    import time
+    log = logging.getLogger(__name__)
+    
+    await websocket.accept()
+    
+    # Check if Bybit symbol is valid for liquidation streaming
+    bybit_stream_supported = True
+    if exchange == 'bybit' and not _is_valid_bybit_liquidation_symbol(symbol):
+        bybit_stream_supported = False
+        log.debug(f"Liquidations WS: {symbol} not supported for Bybit streaming (will use periodic updates only)")
+    
+    log.info(f"Liquidations WS connected: {exchange}:{symbol} (stream_supported={bybit_stream_supported})")
+    
+    try:
+        # Get current price for filtering levels
+        current_price = 0
+        try:
+            if exchange == 'binance':
+                snap = stream_mgr.agg.build_snapshot()
+            else:
+                snap = stream_mgr.agg_bybit.build_snapshot()
+            for m in snap.metrics:
+                if m.symbol == symbol:
+                    current_price = m.last_price
+                    break
+        except Exception:
+            pass
+        
+        # Send initial state (recent liquidations + levels)
+        try:
+            if exchange == 'binance':
+                from .exchanges.binance_liquidations_ws import get_recent_liquidations, get_liquidation_levels
+            else:
+                from .exchanges.bybit_liquidations_ws import get_recent_liquidations, get_liquidation_levels
+            
+            initial_liqs = get_recent_liquidations(symbol, limit=20)
+            initial_levels = get_liquidation_levels(symbol, current_price=current_price, range_pct=5.0)
+            
+            await websocket.send_json({
+                "type": "init",
+                "data": {
+                    "liquidations": initial_liqs,
+                    "levels": initial_levels,
+                    "current_price": current_price,
+                },
+                "ts": int(time.time() * 1000)
+            })
+        except WebSocketDisconnect:
+            log.debug(f"Liquidations WS disconnected before init data sent: {exchange}:{symbol}")
+            return  # Exit early - client already disconnected
+        except Exception as e:
+            # Connection may have closed - this is normal during rapid open/close
+            if "not connected" in str(e).lower() or "closed" in str(e).lower():
+                log.debug(f"Liquidations WS closed before init data: {exchange}:{symbol}")
+                return
+            log.warning(f"Failed to send initial liquidations data: {e}")
+        
+        # Stream real-time updates (only if supported)
+        stream_fn = None
+        if exchange == 'binance':
+            from .exchanges.binance_liquidations_ws import stream_all_liquidations
+            stream_fn = stream_all_liquidations
+        elif exchange == 'bybit' and bybit_stream_supported:
+            from .exchanges.bybit_liquidations_ws import stream_liquidations
+            stream_fn = lambda syms: stream_liquidations(symbol)
+        
+        last_levels_update = time.time()
+        LEVELS_UPDATE_INTERVAL = 5  # Send levels update every 5 seconds
+        
+        # Create a task that streams liquidations
+        async def stream_liqs():
+            nonlocal last_levels_update
+            
+            # Skip streaming if not supported (e.g., invalid Bybit symbols)
+            if stream_fn is None:
+                log.debug(f"Liquidation streaming not available for {exchange}:{symbol}")
+                # Just sleep forever - periodic_levels will handle updates
+                while True:
+                    await asyncio.sleep(3600)
+            
+            try:
+                async for liq in stream_fn({symbol}):
+                    if liq.get("symbol") == symbol:
+                        # Send individual liquidation event
+                        await websocket.send_json({
+                            "type": "liquidation",
+                            "data": liq,
+                            "ts": int(time.time() * 1000)
+                        })
+                        
+                        # Check if we should send levels update
+                        now = time.time()
+                        if now - last_levels_update >= LEVELS_UPDATE_INTERVAL:
+                            try:
+                                levels = get_liquidation_levels(symbol, current_price=current_price, range_pct=5.0)
+                                await websocket.send_json({
+                                    "type": "levels_update",
+                                    "data": {"levels": levels},
+                                    "ts": int(time.time() * 1000)
+                                })
+                                last_levels_update = now
+                            except Exception:
+                                pass
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.warning(f"Liquidation stream error: {e}")
+        
+        # Create a task for periodic levels updates (even without new liquidations)
+        async def periodic_levels():
+            nonlocal last_levels_update, current_price
+            while True:
+                await asyncio.sleep(LEVELS_UPDATE_INTERVAL)
+                try:
+                    # Update current price
+                    try:
+                        if exchange == 'binance':
+                            snap = stream_mgr.agg.build_snapshot()
+                        else:
+                            snap = stream_mgr.agg_bybit.build_snapshot()
+                        for m in snap.metrics:
+                            if m.symbol == symbol:
+                                current_price = m.last_price
+                                break
+                    except Exception:
+                        pass
+                    
+                    levels = get_liquidation_levels(symbol, current_price=current_price, range_pct=5.0)
+                    await websocket.send_json({
+                        "type": "levels_update",
+                        "data": {"levels": levels, "current_price": current_price},
+                        "ts": int(time.time() * 1000)
+                    })
+                    last_levels_update = time.time()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    log.debug(f"Periodic levels update error: {e}")
+        
+        # Run both tasks concurrently
+        stream_task = asyncio.create_task(stream_liqs())
+        levels_task = asyncio.create_task(periodic_levels())
+        
+        # Wait for client disconnect
+        try:
+            while True:
+                # Check for incoming messages (ping/pong or close)
+                try:
+                    msg = await asyncio.wait_for(websocket.receive_text(), timeout=30)
+                    # Handle ping
+                    if msg == "ping":
+                        await websocket.send_text("pong")
+                except asyncio.TimeoutError:
+                    # Send ping to keep connection alive
+                    try:
+                        await websocket.send_json({"type": "ping", "ts": int(time.time() * 1000)})
+                    except Exception:
+                        break
+        finally:
+            stream_task.cancel()
+            levels_task.cancel()
+            try:
+                await stream_task
+            except asyncio.CancelledError:
+                pass
+            try:
+                await levels_task
+            except asyncio.CancelledError:
+                pass
+    
+    except WebSocketDisconnect:
+        log.debug(f"Liquidations WS disconnected: {exchange}:{symbol}")
+    except Exception as e:
+        # Filter out common "not connected" errors to reduce log noise
+        err_str = str(e).lower()
+        if "not connected" in err_str or "closed" in err_str or "cannot call" in err_str:
+            log.debug(f"Liquidations WS closed: {exchange}:{symbol}")
+        else:
+            log.warning(f"Liquidations WS error {exchange}:{symbol}: {e}")
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
 
 @app.websocket("/ws/screener/all")
 async def ws_screener_all(ws: WebSocket):

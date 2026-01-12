@@ -781,7 +781,8 @@ def pct_change_with_current(values, window: int, current_price: float) -> Option
 
 def compute_atr(highs, lows, closes) -> Optional[float]:
     # Needs at least ATR_PERIOD+1 closes
-    n = len(closes)
+    # Also ensure all arrays have the same minimum length
+    n = min(len(closes), len(highs), len(lows))
     if n < ATR_PERIOD+1:
         return None
     trs = []

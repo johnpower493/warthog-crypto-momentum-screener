@@ -211,6 +211,18 @@ export default function Home() {
       long_liq_value: number;
       short_liq_value: number;
     } | null;
+    // Liquidation Levels Heatmap
+    liquidationLevels?: {
+      price: number;
+      long_value: number;
+      short_value: number;
+      total_value: number;
+      long_count: number;
+      short_count: number;
+      total_count: number;
+      intensity: number;
+      bucket_size: number;
+    }[];
   }>({ open: false });
   const [query, setQuery] = useState('');
 
@@ -773,7 +785,7 @@ export default function Home() {
       (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}:8000` : 'http://127.0.0.1:8000');
 
     // Show modal immediately with row data; load all details via combined endpoint
-    setModal({ open: true, row: r, closes: [], oi: [], loading: true, plan: null, bt30: null, bt90: null, news: [], newsLoading: true, fundingRate: null, fundingRateAnnual: null, nextFundingTime: null, fundingLoading: true, longShortRatio: null, liquidations: [], liquidationSummary: null });
+    setModal({ open: true, row: r, closes: [], oi: [], loading: true, plan: null, bt30: null, bt90: null, news: [], newsLoading: true, fundingRate: null, fundingRateAnnual: null, nextFundingTime: null, fundingLoading: true, longShortRatio: null, liquidations: [], liquidationSummary: null, liquidationLevels: [] });
 
     try {
       // Use combined endpoint - reduces API calls
@@ -799,12 +811,13 @@ export default function Home() {
           longShortRatio: data.long_short_ratio || null,
           liquidations: data.liquidations || [],
           liquidationSummary: data.liquidation_summary || null,
+          liquidationLevels: data.liquidation_levels || [],
         }));
       } else {
         throw new Error('Failed to fetch details');
       }
     } catch (e) {
-      setModal((m) => ({ ...m, open: true, row: r, closes: [], oi: [], news: [], newsLoading: false, loading: false, fundingLoading: false, longShortRatio: null, liquidations: [], liquidationSummary: null }));
+      setModal((m) => ({ ...m, open: true, row: r, closes: [], oi: [], news: [], newsLoading: false, loading: false, fundingLoading: false, longShortRatio: null, liquidations: [], liquidationSummary: null, liquidationLevels: [] }));
     }
   };
 
@@ -1416,6 +1429,7 @@ export default function Home() {
           longShortRatio={modal.longShortRatio}
           liquidations={modal.liquidations}
           liquidationSummary={modal.liquidationSummary}
+          liquidationLevels={modal.liquidationLevels}
           isFav={favs.includes(idOf(modal.row))}
           onToggleFav={() => toggleFav(idOf(modal.row!), favs, setFavs)}
           onClose={() => setModal({ open: false })}
@@ -1614,6 +1628,294 @@ function deltaColor(series: number[]) {
   return '#f6c177';
 }
 
+// Liquidation Heatmap with Real-time WebSocket Updates
+function LiquidationHeatmap({
+  exchange,
+  symbol,
+  currentPrice: initialPrice,
+  initialLevels,
+  initialLiquidations,
+  wsUrl,
+}: {
+  exchange: string;
+  symbol: string;
+  currentPrice: number;
+  initialLevels: any[];
+  initialLiquidations: any[];
+  wsUrl: string;
+}) {
+  const [levels, setLevels] = useState(initialLevels);
+  const [recentLiqs, setRecentLiqs] = useState(initialLiquidations);
+  const [currentPrice, setCurrentPrice] = useState(initialPrice);
+  const [isLive, setIsLive] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState<number>(Date.now());
+  const wsRef = useRef<WebSocket | null>(null);
+
+  // Update from props when they change
+  useEffect(() => {
+    if (initialLevels.length > 0) setLevels(initialLevels);
+  }, [initialLevels]);
+
+  useEffect(() => {
+    if (initialLiquidations.length > 0) setRecentLiqs(initialLiquidations);
+  }, [initialLiquidations]);
+
+  useEffect(() => {
+    if (initialPrice > 0) setCurrentPrice(initialPrice);
+  }, [initialPrice]);
+
+  // WebSocket connection for real-time updates
+  useEffect(() => {
+    if (!wsUrl || !exchange || !symbol) return;
+
+    // Convert HTTP URL to WebSocket URL
+    const wsBase = wsUrl.replace(/^http/, 'ws').replace(/\/ws\/screener.*$/, '');
+    const liqWsUrl = `${wsBase}/ws/liquidations/${exchange}/${symbol}`;
+    
+    let reconnectTimeout: ReturnType<typeof setTimeout>;
+    let ws: WebSocket;
+
+    const connect = () => {
+      try {
+        ws = new WebSocket(liqWsUrl);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          setIsLive(true);
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            
+            if (msg.type === 'init') {
+              if (msg.data.levels) setLevels(msg.data.levels);
+              if (msg.data.liquidations) setRecentLiqs(msg.data.liquidations);
+              if (msg.data.current_price) setCurrentPrice(msg.data.current_price);
+            } else if (msg.type === 'liquidation') {
+              setRecentLiqs(prev => [msg.data, ...prev.slice(0, 19)]);
+              setLastUpdate(Date.now());
+            } else if (msg.type === 'levels_update') {
+              if (msg.data.levels) setLevels(msg.data.levels);
+              if (msg.data.current_price) setCurrentPrice(msg.data.current_price);
+              setLastUpdate(Date.now());
+            } else if (msg.type === 'ping') {
+              ws.send('ping');
+            }
+          } catch (e) {
+            // Parse error
+          }
+        };
+
+        ws.onclose = () => {
+          setIsLive(false);
+          reconnectTimeout = setTimeout(connect, 3000);
+        };
+
+        ws.onerror = () => {
+          ws.close();
+        };
+      } catch (e) {
+        reconnectTimeout = setTimeout(connect, 3000);
+      }
+    };
+
+    connect();
+
+    return () => {
+      clearTimeout(reconnectTimeout);
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    };
+  }, [wsUrl, exchange, symbol]);
+
+  const maxIntensity = Math.max(...levels.map(l => l.intensity || 0), 0.001);
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div className="muted" style={{ fontSize: 12, marginBottom: 8, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
+        🔥 Liquidation Heatmap
+        {isLive && (
+          <span style={{ 
+            fontSize: 10, 
+            padding: '2px 6px', 
+            background: 'rgba(42, 157, 143, 0.3)', 
+            color: '#2a9d8f', 
+            borderRadius: 4,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4
+          }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#2a9d8f' }} />
+            LIVE
+          </span>
+        )}
+      </div>
+      <div className="card" style={{ padding: 16, background: 'rgba(0,0,0,0.2)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>
+            Price levels with concentrated liquidations (last 1h)
+          </div>
+          
+          {levels.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 20, color: '#666' }}>
+              No liquidation data yet. Data will appear as liquidations occur.
+            </div>
+          ) : (
+            <>
+              <div style={{ 
+                display: 'flex', 
+                flexDirection: 'column', 
+                gap: 2,
+                maxHeight: 300,
+                overflowY: 'auto'
+              }}>
+                {levels.map((level, idx) => {
+                  const normalizedIntensity = maxIntensity > 0 ? (level.intensity || 0) / maxIntensity : 0;
+                  const isAbovePrice = level.price > currentPrice;
+                  const isNearPrice = currentPrice > 0 && Math.abs(level.price - currentPrice) / currentPrice < 0.005;
+                  
+                  return (
+                    <div 
+                      key={idx}
+                      style={{ 
+                        display: 'flex', 
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '4px 8px',
+                        background: isNearPrice ? 'rgba(74, 158, 255, 0.15)' : 'rgba(0,0,0,0.2)',
+                        borderRadius: 4,
+                        borderLeft: isNearPrice ? '3px solid #4a9eff' : '3px solid transparent'
+                      }}
+                    >
+                      <div style={{ 
+                        width: 80, 
+                        fontSize: 11, 
+                        fontWeight: 600,
+                        color: isNearPrice ? '#4a9eff' : isAbovePrice ? '#e76f51' : '#2a9d8f'
+                      }}>
+                        ${fmt(level.price)}
+                      </div>
+                      
+                      <div style={{ 
+                        flex: 1, 
+                        height: 20, 
+                        display: 'flex',
+                        borderRadius: 3,
+                        overflow: 'hidden',
+                        background: 'rgba(0,0,0,0.3)'
+                      }}>
+                        {level.long_value > 0 && (
+                          <div style={{ 
+                            width: `${(level.long_value / level.total_value) * 100 * normalizedIntensity}%`,
+                            background: `rgba(42, 157, 143, ${0.3 + normalizedIntensity * 0.7})`,
+                            minWidth: 4
+                          }} />
+                        )}
+                        {level.short_value > 0 && (
+                          <div style={{ 
+                            width: `${(level.short_value / level.total_value) * 100 * normalizedIntensity}%`,
+                            background: `rgba(231, 111, 81, ${0.3 + normalizedIntensity * 0.7})`,
+                            minWidth: 4
+                          }} />
+                        )}
+                      </div>
+                      
+                      <div style={{ 
+                        width: 70, 
+                        fontSize: 10, 
+                        textAlign: 'right',
+                        color: normalizedIntensity > 0.7 ? '#fff' : '#888',
+                        fontWeight: normalizedIntensity > 0.7 ? 600 : 400
+                      }}>
+                        ${level.total_value >= 1000000 
+                          ? (level.total_value / 1000000).toFixed(1) + 'M' 
+                          : (level.total_value / 1000).toFixed(0) + 'K'}
+                      </div>
+                      
+                      <div style={{ 
+                        width: 30, 
+                        fontSize: 10, 
+                        textAlign: 'right',
+                        color: '#666'
+                      }}>
+                        {level.total_count}x
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              
+              {recentLiqs.length > 0 && (
+                <div style={{ 
+                  marginTop: 8,
+                  padding: '8px 12px',
+                  background: 'rgba(0,0,0,0.2)',
+                  borderRadius: 6,
+                  maxHeight: 100,
+                  overflowY: 'auto'
+                }}>
+                  <div style={{ fontSize: 10, color: '#888', marginBottom: 6 }}>Recent Liquidations</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {recentLiqs.slice(0, 5).map((liq, idx) => (
+                      <div key={idx} style={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between',
+                        fontSize: 11,
+                        opacity: 1 - (idx * 0.15)
+                      }}>
+                        <span style={{ 
+                          color: liq.side === 'SELL' ? '#2a9d8f' : '#e76f51',
+                          fontWeight: 600
+                        }}>
+                          {liq.side === 'SELL' ? '🟢 LONG' : '🔴 SHORT'}
+                        </span>
+                        <span style={{ color: '#888' }}>${fmt(liq.price)}</span>
+                        <span style={{ fontWeight: 500 }}>
+                          ${liq.value_usd >= 1000000 
+                            ? (liq.value_usd / 1000000).toFixed(1) + 'M' 
+                            : (liq.value_usd / 1000).toFixed(1) + 'K'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
+              <div style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center',
+                paddingTop: 8,
+                borderTop: '1px solid rgba(255,255,255,0.1)',
+                fontSize: 10,
+                color: '#888'
+              }}>
+                <div style={{ display: 'flex', gap: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <div style={{ width: 12, height: 12, background: '#2a9d8f', borderRadius: 2 }} />
+                    <span>Long Liqs</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <div style={{ width: 12, height: 12, background: '#e76f51', borderRadius: 2 }} />
+                    <span>Short Liqs</span>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <div style={{ width: 12, height: 12, background: '#4a9eff', borderRadius: 2 }} />
+                  <span>Current Price</span>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DetailsModal({
   row,
   closes,
@@ -1631,6 +1933,7 @@ function DetailsModal({
   longShortRatio,
   liquidations,
   liquidationSummary,
+  liquidationLevels,
   isFav,
   onToggleFav,
   onClose,
@@ -1676,6 +1979,17 @@ function DetailsModal({
     long_liq_value: number;
     short_liq_value: number;
   } | null;
+  liquidationLevels?: {
+    price: number;
+    long_value: number;
+    short_value: number;
+    total_value: number;
+    long_count: number;
+    short_count: number;
+    total_count: number;
+    intensity: number;
+    bucket_size: number;
+  }[];
   isFav: boolean;
   onToggleFav: () => void;
   onClose: () => void;
@@ -2317,6 +2631,17 @@ function DetailsModal({
                     </div>
                   </div>
                 )}
+
+                {/* Liquidation Levels Heatmap */}
+                <LiquidationHeatmap 
+                  exchange={exchange}
+                  symbol={symbol}
+                  currentPrice={row.last_price}
+                  initialLevels={liquidationLevels || []}
+                  initialLiquidations={liquidations || []}
+                  wsUrl={backendWs}
+                />
+
               </div>
             )}
 
