@@ -2005,6 +2005,28 @@ function DetailsModal({
 
   const [footprintCandles, setFootprintCandles] = useState<any[]>([]);
   const [footprintStatus, setFootprintStatus] = useState<'idle'|'loading'|'connected'>('idle');
+  const [orderflowWalls, setOrderflowWalls] = useState<{
+    support: { price: number; volume: number; strength: number; distance_pct: number; touches: number }[];
+    resistance: { price: number; volume: number; strength: number; distance_pct: number; touches: number }[];
+  }>({ support: [], resistance: [] });
+  
+  // Order book walls (from resting limit orders)
+  const [orderbookWalls, setOrderbookWalls] = useState<{
+    support: { price: number; quantity: number; value_usd: number; strength: number; distance_pct: number; is_cluster?: boolean; cluster_count?: number; price_range?: number[] }[];
+    resistance: { price: number; quantity: number; value_usd: number; strength: number; distance_pct: number; is_cluster?: boolean; cluster_count?: number; price_range?: number[] }[];
+  }>({ support: [], resistance: [] });
+  // Swing trading walls (further from price, clustered)
+  const [swingWalls, setSwingWalls] = useState<{
+    support: { price: number; quantity: number; value_usd: number; strength: number; distance_pct: number; is_cluster?: boolean; cluster_count?: number; price_range?: number[] }[];
+    resistance: { price: number; quantity: number; value_usd: number; strength: number; distance_pct: number; is_cluster?: boolean; cluster_count?: number; price_range?: number[] }[];
+  }>({ support: [], resistance: [] });
+  const [orderbookStatus, setOrderbookStatus] = useState<'idle'|'loading'|'connected'>('idle');
+  const [orderbookImbalance, setOrderbookImbalance] = useState<{
+    bid_ratio: number;
+    imbalance: string;
+    mid_price: number | null;
+    spread: number | null;
+  }>({ bid_ratio: 0.5, imbalance: 'NEUTRAL', mid_price: null, spread: null });
 
   const tvUrl = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(
     exchange.toUpperCase() === 'BYBIT' ? `BYBIT:${symbol}` : `BINANCE:${symbol}`
@@ -2024,6 +2046,13 @@ function DetailsModal({
         const msg = JSON.parse(e.data);
         if (msg.type === 'snapshot') {
           setFootprintCandles(msg.candles || []);
+          // Extract wall data from snapshot (trade-based walls)
+          if (msg.walls) {
+            setOrderflowWalls({
+              support: msg.walls.support || [],
+              resistance: msg.walls.resistance || []
+            });
+          }
         } else if (msg.type === 'delta') {
           setFootprintCandles(prev => {
             const c = msg.candle;
@@ -2035,6 +2064,13 @@ function DetailsModal({
             }
             return [...prev, c];
           });
+          // Update walls from delta
+          if (msg.walls) {
+            setOrderflowWalls({
+              support: msg.walls.support || [],
+              resistance: msg.walls.resistance || []
+            });
+          }
         }
       } catch {}
     };
@@ -2044,6 +2080,48 @@ function DetailsModal({
       ws.close();
       setFootprintStatus('idle');
       setFootprintCandles([]);
+    };
+  }, [exchange, symbol, backendWs]);
+
+  // Order book walls websocket (real-time resting limit orders)
+  useEffect(() => {
+    setOrderbookStatus('loading');
+    const baseWs = backendWs.replace(/\/ws\/screener.*$/, '');
+    const wsUrl = `${baseWs}/ws/orderbook/${exchange}/${symbol}`;
+    const ws = new WebSocket(wsUrl);
+    
+    ws.onopen = () => setOrderbookStatus('connected');
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'init' || msg.type === 'walls_update') {
+          const data = msg.data || {};
+          // Scalping walls (close to price)
+          setOrderbookWalls({
+            support: data.support || [],
+            resistance: data.resistance || []
+          });
+          // Swing trading walls (further from price, clustered)
+          setSwingWalls({
+            support: data.swing_support || [],
+            resistance: data.swing_resistance || []
+          });
+          setOrderbookImbalance({
+            bid_ratio: data.bid_ratio || 0.5,
+            imbalance: data.imbalance || 'NEUTRAL',
+            mid_price: data.mid_price || null,
+            spread: data.spread || null
+          });
+        }
+      } catch {}
+    };
+    ws.onerror = () => setOrderbookStatus('idle');
+    ws.onclose = () => setOrderbookStatus('idle');
+    
+    return () => {
+      ws.close();
+      setOrderbookStatus('idle');
+      setOrderbookWalls({ support: [], resistance: [] });
     };
   }, [exchange, symbol, backendWs]);
 
@@ -2736,7 +2814,282 @@ function DetailsModal({
                 </div>
 
                 <div style={{ marginTop: 12 }}>
-                  <div className="muted" style={{ marginBottom: 6 }}>Order Flow (Footprint) – 1m</div>
+                  {/* Order Book Walls (Real-time from resting limit orders) */}
+                  <div style={{ marginBottom: 16 }}>
+                    <div className="muted" style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      📊 Order Book Walls
+                      {orderbookStatus === 'connected' && (
+                        <span style={{ fontSize: 10, padding: '2px 6px', background: 'rgba(74, 158, 255, 0.3)', color: '#4a9eff', borderRadius: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#4a9eff', animation: 'pulse 2s infinite' }} />
+                          LIVE
+                        </span>
+                      )}
+                      {orderbookStatus === 'loading' && (
+                        <span style={{ fontSize: 10, color: '#888' }}>connecting...</span>
+                      )}
+                    </div>
+                    
+                    {/* Order Book Imbalance Indicator */}
+                    {orderbookStatus === 'connected' && (
+                      <div style={{ marginBottom: 10, padding: '8px 12px', background: 'rgba(0,0,0,0.2)', borderRadius: 6 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                          <span style={{ fontSize: 11, color: '#888' }}>Book Imbalance</span>
+                          <span style={{ 
+                            fontSize: 11, 
+                            fontWeight: 600,
+                            color: orderbookImbalance.imbalance === 'BID' ? '#2a9d8f' : 
+                                   orderbookImbalance.imbalance === 'ASK' ? '#e76f51' : '#888'
+                          }}>
+                            {orderbookImbalance.imbalance === 'BID' ? '🟢 Bid Heavy' : 
+                             orderbookImbalance.imbalance === 'ASK' ? '🔴 Ask Heavy' : '⚖️ Balanced'}
+                          </span>
+                        </div>
+                        <div style={{ 
+                          height: 8, 
+                          borderRadius: 4, 
+                          background: 'rgba(0,0,0,0.3)',
+                          display: 'flex',
+                          overflow: 'hidden'
+                        }}>
+                          <div style={{ 
+                            width: `${orderbookImbalance.bid_ratio * 100}%`, 
+                            background: 'linear-gradient(90deg, #2a9d8f, #40c9a2)',
+                            transition: 'width 0.3s ease'
+                          }} />
+                          <div style={{ 
+                            width: `${(1 - orderbookImbalance.bid_ratio) * 100}%`, 
+                            background: 'linear-gradient(90deg, #e76f51, #f4845f)',
+                            transition: 'width 0.3s ease'
+                          }} />
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#666', marginTop: 4 }}>
+                          <span>Bids {(orderbookImbalance.bid_ratio * 100).toFixed(0)}%</span>
+                          <span>Asks {((1 - orderbookImbalance.bid_ratio) * 100).toFixed(0)}%</span>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Support/Resistance Walls from Order Book */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                      {/* Support Walls (Bid Side) */}
+                      <div style={{ background: 'rgba(42, 157, 143, 0.1)', borderRadius: 6, padding: 10, borderLeft: '3px solid #2a9d8f' }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: '#2a9d8f', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                          🛡️ Support Walls (Bids)
+                        </div>
+                        {orderbookStatus !== 'connected' ? (
+                          <div style={{ fontSize: 10, color: '#666' }}>Connecting...</div>
+                        ) : orderbookWalls.support.length === 0 ? (
+                          <div style={{ fontSize: 10, color: '#666' }}>No large bids detected</div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {orderbookWalls.support.slice(0, 4).map((wall, idx) => (
+                              <div key={idx} style={{ 
+                                display: 'flex', 
+                                flexDirection: 'column',
+                                padding: '6px 8px',
+                                background: 'rgba(42, 157, 143, 0.1)',
+                                borderRadius: 4
+                              }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <span style={{ fontWeight: 600, color: '#2a9d8f', fontSize: 12 }}>${fmt(wall.price)}</span>
+                                  <span style={{ 
+                                    background: 'rgba(42, 157, 143, 0.3)', 
+                                    padding: '2px 6px', 
+                                    borderRadius: 4, 
+                                    fontSize: 10,
+                                    fontWeight: 600
+                                  }}>
+                                    {wall.strength.toFixed(1)}x
+                                  </span>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#888', marginTop: 2 }}>
+                                  <span>${(wall.value_usd / 1000).toFixed(0)}K</span>
+                                  <span>{wall.distance_pct}% away</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Resistance Walls (Ask Side) */}
+                      <div style={{ background: 'rgba(231, 111, 81, 0.1)', borderRadius: 6, padding: 10, borderLeft: '3px solid #e76f51' }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: '#e76f51', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                          🧱 Resistance Walls (Asks)
+                        </div>
+                        {orderbookStatus !== 'connected' ? (
+                          <div style={{ fontSize: 10, color: '#666' }}>Connecting...</div>
+                        ) : orderbookWalls.resistance.length === 0 ? (
+                          <div style={{ fontSize: 10, color: '#666' }}>No large asks detected</div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {orderbookWalls.resistance.slice(0, 4).map((wall, idx) => (
+                              <div key={idx} style={{ 
+                                display: 'flex', 
+                                flexDirection: 'column',
+                                padding: '6px 8px',
+                                background: 'rgba(231, 111, 81, 0.1)',
+                                borderRadius: 4
+                              }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <span style={{ fontWeight: 600, color: '#e76f51', fontSize: 12 }}>${fmt(wall.price)}</span>
+                                  <span style={{ 
+                                    background: 'rgba(231, 111, 81, 0.3)', 
+                                    padding: '2px 6px', 
+                                    borderRadius: 4, 
+                                    fontSize: 10,
+                                    fontWeight: 600
+                                  }}>
+                                    {wall.strength.toFixed(1)}x
+                                  </span>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#888', marginTop: 2 }}>
+                                  <span>${(wall.value_usd / 1000).toFixed(0)}K</span>
+                                  <span>{wall.distance_pct}% away</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    
+                    {/* Swing Trading Zones (Aggregated walls further from price) */}
+                    {orderbookStatus === 'connected' && (swingWalls.support.length > 0 || swingWalls.resistance.length > 0) && (
+                      <div style={{ marginTop: 12 }}>
+                        <div className="muted" style={{ marginBottom: 8, fontSize: 11, display: 'flex', alignItems: 'center', gap: 6 }}>
+                          📈 Swing Trading Zones
+                          <span style={{ fontSize: 10, color: '#666' }}>(within 10% of price)</span>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                          {/* Swing Support Zones */}
+                          <div style={{ background: 'rgba(42, 157, 143, 0.05)', borderRadius: 6, padding: 10, border: '1px dashed rgba(42, 157, 143, 0.3)' }}>
+                            <div style={{ fontSize: 10, fontWeight: 600, color: '#2a9d8f', marginBottom: 6, opacity: 0.8 }}>
+                              Support Zones
+                            </div>
+                            {swingWalls.support.length === 0 ? (
+                              <div style={{ fontSize: 10, color: '#666' }}>No zones detected</div>
+                            ) : (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                {swingWalls.support.slice(0, 5).map((wall, idx) => (
+                                  <div key={idx} style={{ 
+                                    display: 'flex', 
+                                    flexDirection: 'column',
+                                    padding: '6px 8px',
+                                    background: 'rgba(42, 157, 143, 0.1)',
+                                    borderRadius: 4,
+                                    borderLeft: wall.is_cluster ? '2px solid #2a9d8f' : 'none'
+                                  }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                        <span style={{ fontWeight: 600, color: '#2a9d8f', fontSize: 11 }}>${fmt(wall.price)}</span>
+                                        {wall.is_cluster && (
+                                          <span style={{ 
+                                            background: 'rgba(42, 157, 143, 0.2)', 
+                                            padding: '1px 4px', 
+                                            borderRadius: 3, 
+                                            fontSize: 9,
+                                            color: '#2a9d8f'
+                                          }}>
+                                            {wall.cluster_count} orders
+                                          </span>
+                                        )}
+                                      </div>
+                                      <span style={{ 
+                                        background: 'rgba(42, 157, 143, 0.3)', 
+                                        padding: '2px 5px', 
+                                        borderRadius: 4, 
+                                        fontSize: 9,
+                                        fontWeight: 600
+                                      }}>
+                                        {wall.strength.toFixed(1)}x
+                                      </span>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#888', marginTop: 2 }}>
+                                      <span>${wall.value_usd >= 1000000 ? (wall.value_usd / 1000000).toFixed(1) + 'M' : (wall.value_usd / 1000).toFixed(0) + 'K'}</span>
+                                      <span>{wall.distance_pct}% below</span>
+                                    </div>
+                                    {wall.price_range && wall.price_range[0] !== wall.price_range[1] && (
+                                      <div style={{ fontSize: 9, color: '#666', marginTop: 2 }}>
+                                        Range: ${fmt(wall.price_range[0])} - ${fmt(wall.price_range[1])}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          
+                          {/* Swing Resistance Zones */}
+                          <div style={{ background: 'rgba(231, 111, 81, 0.05)', borderRadius: 6, padding: 10, border: '1px dashed rgba(231, 111, 81, 0.3)' }}>
+                            <div style={{ fontSize: 10, fontWeight: 600, color: '#e76f51', marginBottom: 6, opacity: 0.8 }}>
+                              Resistance Zones
+                            </div>
+                            {swingWalls.resistance.length === 0 ? (
+                              <div style={{ fontSize: 10, color: '#666' }}>No zones detected</div>
+                            ) : (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                {swingWalls.resistance.slice(0, 5).map((wall, idx) => (
+                                  <div key={idx} style={{ 
+                                    display: 'flex', 
+                                    flexDirection: 'column',
+                                    padding: '6px 8px',
+                                    background: 'rgba(231, 111, 81, 0.1)',
+                                    borderRadius: 4,
+                                    borderLeft: wall.is_cluster ? '2px solid #e76f51' : 'none'
+                                  }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                        <span style={{ fontWeight: 600, color: '#e76f51', fontSize: 11 }}>${fmt(wall.price)}</span>
+                                        {wall.is_cluster && (
+                                          <span style={{ 
+                                            background: 'rgba(231, 111, 81, 0.2)', 
+                                            padding: '1px 4px', 
+                                            borderRadius: 3, 
+                                            fontSize: 9,
+                                            color: '#e76f51'
+                                          }}>
+                                            {wall.cluster_count} orders
+                                          </span>
+                                        )}
+                                      </div>
+                                      <span style={{ 
+                                        background: 'rgba(231, 111, 81, 0.3)', 
+                                        padding: '2px 5px', 
+                                        borderRadius: 4, 
+                                        fontSize: 9,
+                                        fontWeight: 600
+                                      }}>
+                                        {wall.strength.toFixed(1)}x
+                                      </span>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#888', marginTop: 2 }}>
+                                      <span>${wall.value_usd >= 1000000 ? (wall.value_usd / 1000000).toFixed(1) + 'M' : (wall.value_usd / 1000).toFixed(0) + 'K'}</span>
+                                      <span>{wall.distance_pct}% above</span>
+                                    </div>
+                                    {wall.price_range && wall.price_range[0] !== wall.price_range[1] && (
+                                      <div style={{ fontSize: 9, color: '#666', marginTop: 2 }}>
+                                        Range: ${fmt(wall.price_range[0])} - ${fmt(wall.price_range[1])}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Order Flow Footprint */}
+                  <div className="muted" style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    Order Flow (Footprint) – 1m
+                    {footprintStatus === 'connected' && (
+                      <span style={{ fontSize: 10, padding: '2px 6px', background: 'rgba(42, 157, 143, 0.3)', color: '#2a9d8f', borderRadius: 4 }}>LIVE</span>
+                    )}
+                  </div>
+                  
                   {footprintStatus === 'loading' && <div className="muted">Loading...</div>}
                   {footprintStatus === 'idle' && <div className="muted">Disconnected</div>}
                   {footprintStatus === 'connected' && footprintCandles.length === 0 && <div className="muted">No data yet</div>}

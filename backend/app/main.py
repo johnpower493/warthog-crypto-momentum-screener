@@ -1571,6 +1571,116 @@ def _is_valid_bybit_liquidation_symbol(symbol: str) -> bool:
     return symbol.endswith('USDT') and len(symbol) >= 6
 
 
+@app.websocket("/ws/orderbook/{exchange}/{symbol}")
+async def ws_orderbook(websocket: WebSocket, exchange: str, symbol: str):
+    """Real-time order book wall detection stream.
+    
+    Streams detected support/resistance walls from the live order book.
+    Walls are large resting limit orders that act as support/resistance.
+    
+    Message format:
+    {
+        "type": "walls_update",
+        "data": {
+            "support": [...],
+            "resistance": [...],
+            "mid_price": float,
+            "bid_ratio": float,
+            "imbalance": "BID"|"ASK"|"NEUTRAL"
+        },
+        "ts": timestamp
+    }
+    """
+    import time
+    log = logging.getLogger(__name__)
+    
+    await websocket.accept()
+    log.info(f"Orderbook WS connected: {exchange}:{symbol}")
+    
+    try:
+        from .services.orderbook_hub import get_orderbook_hub
+        hub = get_orderbook_hub()
+        
+        # Start order book collector for this symbol
+        started = await hub.start_orderbook(exchange, symbol)
+        if not started:
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Failed to start orderbook stream for {exchange}:{symbol}",
+                "ts": int(time.time() * 1000)
+            })
+        
+        # Wait a moment for initial data
+        await asyncio.sleep(0.5)
+        
+        # Send initial state
+        state = hub.get_orderbook_state(exchange, symbol)
+        if state:
+            await websocket.send_json({
+                "type": "init",
+                "data": state,
+                "ts": int(time.time() * 1000)
+            })
+        
+        # Stream wall updates
+        UPDATE_INTERVAL = 0.5  # Send updates every 500ms
+        last_walls_hash = ""
+        
+        while True:
+            try:
+                await asyncio.sleep(UPDATE_INTERVAL)
+                
+                # Get current walls - both scalping (close) and swing (further)
+                scalp_walls = hub.get_walls(exchange, symbol, min_strength=1.5, max_distance_pct=3.0)
+                swing_walls = hub.get_swing_walls(exchange, symbol, min_strength=1.3, max_distance_pct=10.0, cluster_pct=0.3)
+                state = hub.get_orderbook_state(exchange, symbol)
+                
+                # Always send update (walls change frequently)
+                await websocket.send_json({
+                    "type": "walls_update",
+                    "data": {
+                        # Scalping walls (within 3% of price)
+                        "support": scalp_walls.get("support", []),
+                        "resistance": scalp_walls.get("resistance", []),
+                        # Swing walls (within 10% of price, clustered)
+                        "swing_support": swing_walls.get("support", []),
+                        "swing_resistance": swing_walls.get("resistance", []),
+                        # Order book state
+                        "mid_price": state.get("mid_price") if state else None,
+                        "best_bid": state.get("best_bid") if state else None,
+                        "best_ask": state.get("best_ask") if state else None,
+                        "spread": state.get("spread") if state else None,
+                        "bid_ratio": state.get("bid_ratio") if state else 0.5,
+                        "imbalance": state.get("imbalance") if state else "NEUTRAL",
+                        "total_bid_value": state.get("total_bid_value") if state else 0,
+                        "total_ask_value": state.get("total_ask_value") if state else 0,
+                    },
+                    "ts": int(time.time() * 1000)
+                })
+                
+                last_walls_hash = walls_hash
+                
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                if "not connected" in str(e).lower() or "closed" in str(e).lower():
+                    break
+                log.debug(f"Orderbook WS update error: {e}")
+                continue
+    
+    except WebSocketDisconnect:
+        log.debug(f"Orderbook WS disconnected: {exchange}:{symbol}")
+    except Exception as e:
+        err_str = str(e).lower()
+        if "not connected" not in err_str and "closed" not in err_str:
+            log.warning(f"Orderbook WS error {exchange}:{symbol}: {e}")
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
 @app.websocket("/ws/liquidations/{exchange}/{symbol}")
 async def ws_liquidations(websocket: WebSocket, exchange: str, symbol: str):
     """Real-time liquidation stream for a specific symbol.
