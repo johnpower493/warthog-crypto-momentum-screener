@@ -435,10 +435,10 @@ class StreamManager:
                     k = Kline(symbol=s, open_time=open_time, close_time=int(row[6]), open=open_, high=high, low=low, close=close, volume=quote_vol, closed=True, exchange="binance")
                     await self.agg.ingest(k)
                 
-                # Direct HTF backfill into store (15m and 4h)
+                # Direct HTF backfill into store (15m, 1h, 4h, 1d)
                 try:
                     from ..services.ohlc_store import upsert_candle
-                    for interval, iv in [("15m", "15m"), ("4h", "4h")]:
+                    for interval, iv in [("15m", "15m"), ("1h", "1h"), ("4h", "4h"), ("1d", "1d")]:
                         r15 = await self._client.get(url, params={"symbol": s, "interval": iv, "limit": 200})
                         r15.raise_for_status()
                         arr15 = r15.json()
@@ -545,10 +545,11 @@ class StreamManager:
                     )
                     await self.agg_bybit.ingest(k)
                 
-                # Direct HTF backfill into store (15m and 4h)
+                # Direct HTF backfill into store (15m, 1h, 4h, 1d)
                 try:
                     from ..services.ohlc_store import upsert_candle
-                    for interval, iv in [("15m", "15"), ("4h", "240")]:
+                    # Bybit interval codes: 15 = 15m, 60 = 1h, 240 = 4h, D = 1d
+                    for interval, iv, interval_ms in [("15m", "15", 15 * 60_000), ("1h", "60", 60 * 60_000), ("4h", "240", 240 * 60_000), ("1d", "D", 1440 * 60_000)]:
                         r15 = await self._client.get(url, params={
                             "category": "linear",
                             "symbol": s,
@@ -560,7 +561,7 @@ class StreamManager:
                         rows15 = result15.get("result", {}).get("list", [])
                         # newest first
                         for row in rows15:
-                            ot = int(row[0]); ct = ot + int(iv) * 60_000
+                            ot = int(row[0]); ct = ot + interval_ms
                             o = float(row[1]); h = float(row[2]); l = float(row[3]); c = float(row[4])
                             turnover = float(row[6]) if len(row) > 6 and row[6] is not None else 0.0
                             upsert_candle("bybit", s, interval, ot, ct, o, h, l, c, turnover)

@@ -83,13 +83,37 @@ class SymbolMetrics(BaseModel):
     signal_score: Optional[float] = None  # combined signal strength (-100 to +100)
     signal_strength: Optional[str] = None  # "strong_bull", "bull", "neutral", "bear", "strong_bear"
     
-    # Technical Indicators
+    # Technical Indicators (15m - default for scalping)
     rsi_14: Optional[float] = None  # RSI (14 period) - 0 to 100
     macd: Optional[float] = None  # MACD line
     macd_signal: Optional[float] = None  # MACD signal line
     macd_histogram: Optional[float] = None  # MACD histogram
     stoch_k: Optional[float] = None  # Stochastic RSI %K (0 to 100)
     stoch_d: Optional[float] = None  # Stochastic RSI %D (0 to 100)
+    
+    # Technical Indicators - 1h timeframe (swing trading)
+    rsi_1h: Optional[float] = None
+    macd_1h: Optional[float] = None
+    macd_signal_1h: Optional[float] = None
+    macd_histogram_1h: Optional[float] = None
+    stoch_k_1h: Optional[float] = None
+    stoch_d_1h: Optional[float] = None
+    
+    # Technical Indicators - 4h timeframe (swing trading)
+    rsi_4h: Optional[float] = None
+    macd_4h: Optional[float] = None
+    macd_signal_4h: Optional[float] = None
+    macd_histogram_4h: Optional[float] = None
+    stoch_k_4h: Optional[float] = None
+    stoch_d_4h: Optional[float] = None
+    
+    # Technical Indicators - 1d (Daily) timeframe (position trading)
+    rsi_1d: Optional[float] = None
+    macd_1d: Optional[float] = None
+    macd_signal_1d: Optional[float] = None
+    macd_histogram_1d: Optional[float] = None
+    stoch_k_1d: Optional[float] = None
+    stoch_d_1d: Optional[float] = None
     
     # Money Flow Index (Cipher B style) - Multiple Timeframes
     mfi_1h: Optional[float] = None  # MFI on 1m data, 60 period (1 hour lookback)

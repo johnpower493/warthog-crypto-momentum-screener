@@ -373,13 +373,13 @@ class Aggregator:
         return vals[-limit:]
 
     def seed_htf_from_db(self, symbol: str):
-        """Reload 15m/4h series for a symbol from the OHLC store"""
+        """Reload 15m/1h/4h/1d series for a symbol from the OHLC store"""
         st = self._states.get(symbol)
         if not st:
             return
         try:
             from ..services.ohlc_store import get_recent
-            for tf in ['15m', '4h']:
+            for tf in ['15m', '1h', '4h', '1d']:
                 rows = get_recent(st.exchange, symbol, tf, limit=300)
                 # Clear existing HTF series
                 st._htf[tf]['close'] = type(st._htf[tf]['close'])(maxlen=st._htf[tf]['close'].values.maxlen)  # type: ignore

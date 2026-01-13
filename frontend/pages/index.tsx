@@ -1081,33 +1081,6 @@ export default function Home() {
             <button className={"button "+(showAlerts? 'buttonActive':'')} onClick={()=>setShowAlerts(v=>!v)} title="Toggle Alert Log">
               Alerts
             </button>
-            <button 
-              className="button" 
-              onClick={() => {
-                const helpText = 
-                  '⌨️ KEYBOARD SHORTCUTS\n\n' +
-                  'ESC          Close modal/dialog\n' +
-                  '/            Focus search box\n' +
-                  '← →          Navigate symbols (in modal)\n' +
-                  '?            Show this help';
-                alert(helpText);
-              }}
-              title="Keyboard shortcuts (?)"
-              style={{ padding: '10px', fontSize: 14 }}
-            >
-              ⌨️
-            </button>
-            <button 
-              className={"button " + (viewMode !== 'auto' ? 'buttonActive' : '')}
-              onClick={() => {
-                // Cycle through: auto -> card -> table -> auto
-                setViewMode(prev => prev === 'auto' ? 'card' : prev === 'card' ? 'table' : 'auto');
-              }}
-              title={`View mode: ${viewMode === 'auto' ? 'Auto (mobile=cards)' : viewMode === 'card' ? 'Cards' : 'Table'} - Click to cycle`}
-              style={{ padding: '10px', fontSize: 14 }}
-            >
-              {viewMode === 'auto' ? '📱' : viewMode === 'card' ? '🃏' : '📋'}
-            </button>
             <button className={"button "+(showColumns? 'buttonActive':'')} onClick={()=>setShowColumns(v=>!v)} title="Choose table columns">
               Columns
             </button>
@@ -1143,6 +1116,33 @@ export default function Home() {
               title="Export current view to CSV"
             >
               Export CSV
+            </button>
+            <button 
+              className="button" 
+              onClick={() => {
+                const helpText = 
+                  '⌨️ KEYBOARD SHORTCUTS\n\n' +
+                  'ESC          Close modal/dialog\n' +
+                  '/            Focus search box\n' +
+                  '← →          Navigate symbols (in modal)\n' +
+                  '?            Show this help';
+                alert(helpText);
+              }}
+              title="Keyboard shortcuts (?)"
+              style={{ padding: '10px', fontSize: 14 }}
+            >
+              ⌨️
+            </button>
+            <button 
+              className={"button " + (viewMode !== 'auto' ? 'buttonActive' : '')}
+              onClick={() => {
+                // Cycle through: auto -> card -> table -> auto
+                setViewMode(prev => prev === 'auto' ? 'card' : prev === 'card' ? 'table' : 'auto');
+              }}
+              title={`View mode: ${viewMode === 'auto' ? 'Auto (mobile=cards)' : viewMode === 'card' ? 'Cards' : 'Table'} - Click to cycle`}
+              style={{ padding: '10px', fontSize: 14 }}
+            >
+              {viewMode === 'auto' ? '📱' : viewMode === 'card' ? '🃏' : '📋'}
             </button>
           </div>
         </div>
@@ -3293,107 +3293,171 @@ function DetailsModal({
 
             {activeTab === 'indicators' && (
               <div style={{ padding: 12, boxSizing: 'border-box', width: '100%', maxWidth: '100vw', overflowX: 'hidden' }}>
-                <div className="muted" style={{ fontSize: 12, marginBottom: 12, fontWeight: 600 }}>
-                  📊 Technical Indicators (15m Timeframe)
+                {/* Multi-Timeframe Indicators Table (Swing/Position Trading) */}
+                <div style={{ overflowX: 'auto' }}>
+                  <div className="muted" style={{ fontSize: 12, marginBottom: 12, fontWeight: 600 }}>
+                    📊 Higher Timeframe Indicators (Swing/Position)
+                  </div>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                        <th style={{ textAlign: 'left', padding: '8px 4px', fontSize: 11, color: '#888' }}>Indicator</th>
+                        <th style={{ textAlign: 'center', padding: '8px 4px', fontSize: 11, color: '#888' }}>1h<br/><span style={{ fontSize: 9, opacity: 0.7 }}>Intraday</span></th>
+                        <th style={{ textAlign: 'center', padding: '8px 4px', fontSize: 11, color: '#888' }}>4h<br/><span style={{ fontSize: 9, opacity: 0.7 }}>Swing</span></th>
+                        <th style={{ textAlign: 'center', padding: '8px 4px', fontSize: 11, color: '#888' }}>1d<br/><span style={{ fontSize: 9, opacity: 0.7 }}>Position</span></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {/* RSI Row */}
+                      <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                        <td style={{ padding: '10px 4px', fontWeight: 600 }}>
+                          RSI (14)
+                          <div style={{ fontSize: 10, color: '#666', fontWeight: 400 }}>Relative Strength</div>
+                        </td>
+                        {[
+                          { val: (row as any).rsi_1h, label: '1h' },
+                          { val: (row as any).rsi_4h, label: '4h' },
+                          { val: (row as any).rsi_1d, label: '1d' },
+                        ].map((tf, i) => (
+                          <td key={i} style={{ textAlign: 'center', padding: '10px 4px' }}>
+                            {tf.val !== null && tf.val !== undefined ? (
+                              <div style={{ 
+                                fontWeight: 700, 
+                                fontSize: 15,
+                                color: tf.val >= 70 ? '#e76f51' : tf.val <= 30 ? '#2a9d8f' : 'var(--text)' 
+                              }}>
+                                {tf.val.toFixed(1)}
+                                <div style={{ fontSize: 9, fontWeight: 400, marginTop: 2 }}>
+                                  {tf.val >= 70 ? '🔴 OB' : tf.val <= 30 ? '🟢 OS' : '⚪'}
+                                </div>
+                              </div>
+                            ) : (
+                              <span style={{ color: '#555', fontSize: 11 }}>—</span>
+                            )}
+                          </td>
+                        ))}
+                      </tr>
+                      
+                      {/* MACD Histogram Row */}
+                      <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                        <td style={{ padding: '10px 4px', fontWeight: 600 }}>
+                          MACD Hist
+                          <div style={{ fontSize: 10, color: '#666', fontWeight: 400 }}>Momentum</div>
+                        </td>
+                        {[
+                          { val: (row as any).macd_histogram_1h, label: '1h' },
+                          { val: (row as any).macd_histogram_4h, label: '4h' },
+                          { val: (row as any).macd_histogram_1d, label: '1d' },
+                        ].map((tf, i) => (
+                          <td key={i} style={{ textAlign: 'center', padding: '10px 4px' }}>
+                            {tf.val !== null && tf.val !== undefined ? (
+                              <div style={{ 
+                                fontWeight: 700, 
+                                fontSize: 14,
+                                color: tf.val >= 0 ? '#3ee145' : '#e13e3e' 
+                              }}>
+                                {tf.val >= 0 ? '+' : ''}{tf.val.toFixed(3)}
+                                <div style={{ fontSize: 9, fontWeight: 400, marginTop: 2 }}>
+                                  {tf.val > 0 ? '🟢 Bull' : '🔴 Bear'}
+                                </div>
+                              </div>
+                            ) : (
+                              <span style={{ color: '#555', fontSize: 11 }}>—</span>
+                            )}
+                          </td>
+                        ))}
+                      </tr>
+                      
+                      {/* Stochastic RSI %K Row */}
+                      <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                        <td style={{ padding: '10px 4px', fontWeight: 600 }}>
+                          Stoch RSI %K
+                          <div style={{ fontSize: 10, color: '#666', fontWeight: 400 }}>Overbought/Oversold</div>
+                        </td>
+                        {[
+                          { val: (row as any).stoch_k_1h, label: '1h' },
+                          { val: (row as any).stoch_k_4h, label: '4h' },
+                          { val: (row as any).stoch_k_1d, label: '1d' },
+                        ].map((tf, i) => (
+                          <td key={i} style={{ textAlign: 'center', padding: '10px 4px' }}>
+                            {tf.val !== null && tf.val !== undefined ? (
+                              <div style={{ 
+                                fontWeight: 700, 
+                                fontSize: 15,
+                                color: tf.val >= 80 ? '#e76f51' : tf.val <= 20 ? '#2a9d8f' : 'var(--text)' 
+                              }}>
+                                {tf.val.toFixed(1)}
+                                <div style={{ fontSize: 9, fontWeight: 400, marginTop: 2 }}>
+                                  {tf.val >= 80 ? '🔴 OB' : tf.val <= 20 ? '🟢 OS' : '⚪'}
+                                </div>
+                              </div>
+                            ) : (
+                              <span style={{ color: '#555', fontSize: 11 }}>—</span>
+                            )}
+                          </td>
+                        ))}
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
                 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  
-                  {/* RSI Card */}
-                  <div className="card" style={{ padding: 12 }}>
-                    <div style={{ marginBottom: 8 }}>
-                      <span style={{ fontWeight: 600, fontSize: 14 }}>RSI (14)</span>
-                      <span className="muted" style={{ fontSize: 11, marginLeft: 8 }}>Relative Strength Index</span>
-                    </div>
-                    {row.rsi_14 !== null && row.rsi_14 !== undefined ? (
-                      <>
-                        <div style={{ fontSize: 32, fontWeight: 700, marginBottom: 8, color: row.rsi_14 >= 70 ? '#e76f51' : row.rsi_14 <= 30 ? '#2a9d8f' : 'var(--text)' }}>
-                          {row.rsi_14.toFixed(1)}
-                        </div>
-                        <div style={{ fontSize: 11, color: '#888' }}>
-                          {row.rsi_14 >= 70 ? '🔴 Overbought (>70)' : row.rsi_14 <= 30 ? '🟢 Oversold (<30)' : '⚪ Neutral (30-70)'}
-                        </div>
-                        <div style={{ marginTop: 8, height: 4, background: 'rgba(255,255,255,0.1)', borderRadius: 2, overflow: 'hidden' }}>
-                          <div style={{ width: `${row.rsi_14}%`, height: '100%', background: row.rsi_14 >= 70 ? '#e76f51' : row.rsi_14 <= 30 ? '#2a9d8f' : '#4a9eff', transition: 'width 0.3s' }} />
-                        </div>
-                      </>
-                    ) : (
-                      <div className="muted" style={{ fontSize: 12 }}>Not enough data (need 15+ candles)</div>
-                    )}
-                  </div>
-
-                  {/* MACD Card */}
-                  <div className="card" style={{ padding: 12 }}>
-                    <div style={{ marginBottom: 8 }}>
-                      <span style={{ fontWeight: 600, fontSize: 14 }}>MACD (12,26,9)</span>
-                      <span className="muted" style={{ fontSize: 11, marginLeft: 8 }}>Moving Avg Convergence</span>
-                    </div>
-                    {row.macd !== null && row.macd !== undefined ? (
-                      <>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13 }}>
-                          <div>
-                            <span className="muted">MACD: </span>
-                            <span style={{ fontWeight: 600, color: (row.macd || 0) >= 0 ? '#3ee145' : '#e13e3e' }}>
-                              {row.macd.toFixed(2)}
-                            </span>
+                {/* Detailed Cards for 15m (Scalping Reference) */}
+                <div style={{ marginTop: 20 }}>
+                  <div className="muted" style={{ fontSize: 11, marginBottom: 8 }}>📈 15m Detailed View (Scalping)</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                    {/* RSI Mini Card */}
+                    <div className="card" style={{ padding: 10, textAlign: 'center' }}>
+                      <div style={{ fontSize: 10, color: '#888', marginBottom: 4 }}>RSI</div>
+                      {row.rsi_14 != null ? (
+                        <>
+                          <div style={{ fontSize: 20, fontWeight: 700, color: row.rsi_14 >= 70 ? '#e76f51' : row.rsi_14 <= 30 ? '#2a9d8f' : 'var(--text)' }}>
+                            {row.rsi_14.toFixed(1)}
                           </div>
-                          <div>
-                            <span className="muted">Signal: </span>
-                            <span style={{ fontWeight: 600 }}>
-                              {row.macd_signal?.toFixed(2) || 'N/A'}
-                            </span>
+                          <div style={{ marginTop: 4, height: 3, background: 'rgba(255,255,255,0.1)', borderRadius: 2, overflow: 'hidden' }}>
+                            <div style={{ width: `${row.rsi_14}%`, height: '100%', background: row.rsi_14 >= 70 ? '#e76f51' : row.rsi_14 <= 30 ? '#2a9d8f' : '#4a9eff' }} />
                           </div>
-                          <div>
-                            <span className="muted">Histogram: </span>
-                            <span style={{ fontWeight: 600, color: (row.macd_histogram || 0) >= 0 ? '#3ee145' : '#e13e3e' }}>
-                              {row.macd_histogram?.toFixed(2) || 'N/A'}
-                            </span>
-                          </div>
-                        </div>
-                        <div style={{ fontSize: 11, color: '#888', marginTop: 8 }}>
-                          {(row.macd_histogram || 0) > 0 ? '🟢 Bullish momentum' : '🔴 Bearish momentum'}
-                        </div>
-                      </>
-                    ) : (
-                      <div className="muted" style={{ fontSize: 12 }}>Not enough data (need 35+ candles)</div>
-                    )}
-                  </div>
-
-                  {/* Stochastic RSI Card */}
-                  <div className="card" style={{ padding: 12 }}>
-                    <div style={{ marginBottom: 8 }}>
-                      <span style={{ fontWeight: 600, fontSize: 14 }}>Stochastic RSI</span>
-                      <span className="muted" style={{ fontSize: 11, marginLeft: 8 }}>%K / %D</span>
+                        </>
+                      ) : <span style={{ color: '#555' }}>—</span>}
                     </div>
-                    {row.stoch_k !== null && row.stoch_k !== undefined ? (
-                      <>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13, marginBottom: 8 }}>
-                          <div>
-                            <span className="muted">%K: </span>
-                            <span style={{ fontWeight: 600, color: row.stoch_k >= 80 ? '#e76f51' : row.stoch_k <= 20 ? '#2a9d8f' : 'var(--text)' }}>
+                    
+                    {/* MACD Mini Card */}
+                    <div className="card" style={{ padding: 10, textAlign: 'center' }}>
+                      <div style={{ fontSize: 10, color: '#888', marginBottom: 4 }}>MACD</div>
+                      {row.macd != null ? (
+                        <>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: (row.macd || 0) >= 0 ? '#3ee145' : '#e13e3e' }}>
+                            {row.macd.toFixed(3)}
+                          </div>
+                          <div style={{ fontSize: 10, color: '#666', marginTop: 2 }}>
+                            Sig: {row.macd_signal?.toFixed(3) ?? '—'}
+                          </div>
+                        </>
+                      ) : <span style={{ color: '#555' }}>—</span>}
+                    </div>
+                    
+                    {/* Stoch RSI Mini Card */}
+                    <div className="card" style={{ padding: 10, textAlign: 'center' }}>
+                      <div style={{ fontSize: 10, color: '#888', marginBottom: 4 }}>Stoch RSI</div>
+                      {row.stoch_k != null ? (
+                        <>
+                          <div style={{ fontSize: 14, fontWeight: 700 }}>
+                            <span style={{ color: row.stoch_k >= 80 ? '#e76f51' : row.stoch_k <= 20 ? '#2a9d8f' : 'var(--text)' }}>
                               {row.stoch_k.toFixed(1)}
                             </span>
-                          </div>
-                          <div>
-                            <span className="muted">%D: </span>
-                            <span style={{ fontWeight: 600, color: (row.stoch_d || 0) >= 80 ? '#e76f51' : (row.stoch_d || 0) <= 20 ? '#2a9d8f' : 'var(--text)' }}>
-                              {row.stoch_d?.toFixed(1) || 'N/A'}
+                            <span style={{ color: '#666', margin: '0 2px' }}>/</span>
+                            <span style={{ color: (row.stoch_d || 0) >= 80 ? '#e76f51' : (row.stoch_d || 0) <= 20 ? '#2a9d8f' : 'var(--text)' }}>
+                              {row.stoch_d?.toFixed(1) ?? '—'}
                             </span>
                           </div>
-                        </div>
-                        <div style={{ fontSize: 11, color: '#888' }}>
-                          {row.stoch_k >= 80 ? '🔴 Overbought (>80)' : row.stoch_k <= 20 ? '🟢 Oversold (<20)' : '⚪ Neutral (20-80)'}
-                        </div>
-                      </>
-                    ) : (
-                      <div className="muted" style={{ fontSize: 12 }}>Not enough data (need 35+ candles)</div>
-                    )}
+                          <div style={{ fontSize: 9, color: '#666', marginTop: 2 }}>%K / %D</div>
+                        </>
+                      ) : <span style={{ color: '#555' }}>—</span>}
+                    </div>
                   </div>
-
                 </div>
 
                 <div className="muted" style={{ fontSize: 11, marginTop: 16, padding: 12, background: 'rgba(0,0,0,0.2)', borderRadius: 4 }}>
-                  ℹ️ All indicators are calculated on 15m closed candles for more stable signals. Indicators may show "Not enough data" until sufficient 15m candles have been collected (~6 hours for full indicator set).
+                  ℹ️ <strong>Multi-Timeframe Analysis:</strong> 15m cards for scalping entries, higher timeframes (1h/4h/1d) for swing & position trading context. OB = Overbought, OS = Oversold. Higher timeframes provide stronger signals but slower confirmation.
                 </div>
                 
                 {/* Advanced Metrics Section */}

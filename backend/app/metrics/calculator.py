@@ -58,8 +58,24 @@ class SymbolState:
                 'low': RollingSeries(maxlen=maxlen_htf),
                 'vol': RollingSeries(maxlen=maxlen_htf),
             },
+            '1h': {
+                'interval_ms': 60 * 60_000,
+                'current': None,  # type: ignore
+                'close': RollingSeries(maxlen=maxlen_htf),
+                'high': RollingSeries(maxlen=maxlen_htf),
+                'low': RollingSeries(maxlen=maxlen_htf),
+                'vol': RollingSeries(maxlen=maxlen_htf),
+            },
             '4h': {
                 'interval_ms': 240 * 60_000,
+                'current': None,  # type: ignore
+                'close': RollingSeries(maxlen=maxlen_htf),
+                'high': RollingSeries(maxlen=maxlen_htf),
+                'low': RollingSeries(maxlen=maxlen_htf),
+                'vol': RollingSeries(maxlen=maxlen_htf),
+            },
+            '1d': {
+                'interval_ms': 1440 * 60_000,
                 'current': None,  # type: ignore
                 'close': RollingSeries(maxlen=maxlen_htf),
                 'high': RollingSeries(maxlen=maxlen_htf),
@@ -76,7 +92,7 @@ class SymbolState:
         # Individual symbols can still use get_recent for lazy loading
         try:
             from ..services.ohlc_store import get_recent
-            for tf in ['15m', '4h']:
+            for tf in ['15m', '1h', '4h', '1d']:
                 rows = get_recent(self.exchange, self.symbol, tf, limit=300)
                 for (ot, ct, o, h, l, c, v) in rows:
                     self._htf[tf]['close'].append(c)
@@ -105,8 +121,8 @@ class SymbolState:
         # Only resample on closed 1m candles to avoid intrabar noise
         if not getattr(k, 'closed', True):
             return
-        # Update 15m and 4h aggregations using incoming 1m closed candle
-        for tf in ['15m', '4h']:
+        # Update all HTF aggregations using incoming 1m closed candle
+        for tf in ['15m', '1h', '4h', '1d']:
             cfg = self._htf[tf]
             interval_ms = cfg['interval_ms']
             bucket_open = k.open_time - (k.open_time % interval_ms)
@@ -334,27 +350,51 @@ class SymbolState:
             vol_zscore=vol_z
         )
         
-        # Technical Indicators (calculated on 15m HTF for more stable signals)
+        # Technical Indicators - Multi-Timeframe (15m for scalping, 1h/4h/1d for swing trading)
         # Use caching to avoid expensive recalculations
-        closes_15m = list(self._htf['15m']['close'].values)
         
-        # Cache key includes data length to invalidate when new candle arrives
-        cache_suffix = f"_{len(closes_15m)}"
+        def _compute_tf_indicators(tf: str):
+            """Compute RSI, MACD, StochRSI for a given timeframe."""
+            closes = list(self._htf[tf]['close'].values)
+            cache_suffix = f"_{tf}_{len(closes)}"
+            
+            rsi_val = self._get_cached_or_compute(
+                f"rsi_14{cache_suffix}",
+                lambda: rsi(closes, period=14) if len(closes) >= 15 else None
+            )
+            
+            macd_vals = self._get_cached_or_compute(
+                f"macd{cache_suffix}",
+                lambda: macd(closes, fast=12, slow=26, signal=9) if len(closes) >= 35 else (None, None, None)
+            )
+            
+            stoch_vals = self._get_cached_or_compute(
+                f"stoch_rsi{cache_suffix}",
+                lambda: stochastic_rsi(closes, rsi_period=14, stoch_period=14, k_smooth=3, d_smooth=3) if len(closes) >= 35 else (None, None)
+            )
+            
+            return {
+                'rsi': rsi_val,
+                'macd': macd_vals[0] if macd_vals else None,
+                'macd_signal': macd_vals[1] if macd_vals else None,
+                'macd_histogram': macd_vals[2] if macd_vals else None,
+                'stoch_k': stoch_vals[0] if stoch_vals else None,
+                'stoch_d': stoch_vals[1] if stoch_vals else None,
+            }
         
-        rsi_14_val = self._get_cached_or_compute(
-            f"rsi_14{cache_suffix}",
-            lambda: rsi(closes_15m, period=14) if len(closes_15m) >= 15 else None
-        )
+        # Compute indicators for all timeframes
+        ind_15m = _compute_tf_indicators('15m')
+        ind_1h = _compute_tf_indicators('1h')
+        ind_4h = _compute_tf_indicators('4h')
+        ind_1d = _compute_tf_indicators('1d')
         
-        macd_val, macd_sig_val, macd_hist_val = self._get_cached_or_compute(
-            f"macd{cache_suffix}",
-            lambda: macd(closes_15m, fast=12, slow=26, signal=9) if len(closes_15m) >= 35 else (None, None, None)
-        )
-        
-        stoch_k_val, stoch_d_val = self._get_cached_or_compute(
-            f"stoch_rsi{cache_suffix}",
-            lambda: stochastic_rsi(closes_15m, rsi_period=14, stoch_period=14, k_smooth=3, d_smooth=3) if len(closes_15m) >= 35 else (None, None)
-        )
+        # Legacy 15m values (for backward compatibility)
+        rsi_14_val = ind_15m['rsi']
+        macd_val = ind_15m['macd']
+        macd_sig_val = ind_15m['macd_signal']
+        macd_hist_val = ind_15m['macd_histogram']
+        stoch_k_val = ind_15m['stoch_k']
+        stoch_d_val = ind_15m['stoch_d']
         
         # Money Flow Index (Cipher B style) - Multiple Timeframes
         # 1h MFI (1m data, 60 periods = 1 hour)
@@ -474,6 +514,27 @@ class SymbolState:
             macd_histogram=macd_hist_val,
             stoch_k=stoch_k_val,
             stoch_d=stoch_d_val,
+            # Multi-timeframe indicators (1h)
+            rsi_1h=ind_1h['rsi'],
+            macd_1h=ind_1h['macd'],
+            macd_signal_1h=ind_1h['macd_signal'],
+            macd_histogram_1h=ind_1h['macd_histogram'],
+            stoch_k_1h=ind_1h['stoch_k'],
+            stoch_d_1h=ind_1h['stoch_d'],
+            # Multi-timeframe indicators (4h)
+            rsi_4h=ind_4h['rsi'],
+            macd_4h=ind_4h['macd'],
+            macd_signal_4h=ind_4h['macd_signal'],
+            macd_histogram_4h=ind_4h['macd_histogram'],
+            stoch_k_4h=ind_4h['stoch_k'],
+            stoch_d_4h=ind_4h['stoch_d'],
+            # Multi-timeframe indicators (1d)
+            rsi_1d=ind_1d['rsi'],
+            macd_1d=ind_1d['macd'],
+            macd_signal_1d=ind_1d['macd_signal'],
+            macd_histogram_1d=ind_1d['macd_histogram'],
+            stoch_k_1d=ind_1d['stoch_k'],
+            stoch_d_1d=ind_1d['stoch_d'],
             # New metrics
             mfi_1h=mfi_1h_val,
             mfi_15m=mfi_15m_val,

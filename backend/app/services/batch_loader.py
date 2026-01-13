@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 def batch_seed_htf_data(exchange: str, symbols: List[str]) -> Dict[str, Dict[str, List]]:
     """
-    Load 15m and 4h OHLC data for multiple symbols in batch.
+    Load 15m, 1h, 4h, and 1d OHLC data for multiple symbols in batch.
     
     Returns: Dict[symbol][timeframe] = list of (ot, ct, o, h, l, c, v) tuples
     """
@@ -19,19 +19,22 @@ def batch_seed_htf_data(exchange: str, symbols: List[str]) -> Dict[str, Dict[str
     result = {}
     
     try:
-        # Batch fetch for 15m
+        # Batch fetch for all timeframes
         data_15m = get_recent_batch(exchange, symbols, '15m', limit=300)
-        # Batch fetch for 4h
+        data_1h = get_recent_batch(exchange, symbols, '1h', limit=300)
         data_4h = get_recent_batch(exchange, symbols, '4h', limit=300)
+        data_1d = get_recent_batch(exchange, symbols, '1d', limit=300)
         
         # Combine into nested dict
         for sym in symbols:
             result[sym] = {
                 '15m': data_15m.get(sym, []),
+                '1h': data_1h.get(sym, []),
                 '4h': data_4h.get(sym, []),
+                '1d': data_1d.get(sym, []),
             }
         
-        logger.info(f"Batch loaded HTF data for {len(symbols)} symbols (15m: {sum(len(v) for v in data_15m.values())} rows, 4h: {sum(len(v) for v in data_4h.values())} rows)")
+        logger.info(f"Batch loaded HTF data for {len(symbols)} symbols (15m: {sum(len(v) for v in data_15m.values())} rows, 1h: {sum(len(v) for v in data_1h.values())} rows, 4h: {sum(len(v) for v in data_4h.values())} rows, 1d: {sum(len(v) for v in data_1d.values())} rows)")
     except Exception as e:
         logger.error(f"Error in batch HTF loading: {e}")
         # Return empty dict on error, individual symbols will fall back to lazy loading
@@ -59,7 +62,7 @@ def seed_symbol_state_batch(states: Dict[str, any], exchange: str):
     for sym, state in states.items():
         data = htf_data.get(sym, {})
         
-        for tf in ['15m', '4h']:
+        for tf in ['15m', '1h', '4h', '1d']:
             rows = data.get(tf, [])
             if rows:
                 # Clear existing and populate
