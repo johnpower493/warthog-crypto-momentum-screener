@@ -937,14 +937,42 @@ export default function Home() {
 
       {/* Reconnection Banner */}
       {(isReconnecting || status === 'disconnected') && (
-        <div className="reconnect-banner">
-          <span className="reconnect-icon">⚠️</span>
+        <div className={`reconnect-banner ${reconnectAttempt >= 3 ? 'disconnected' : ''}`}>
+          <span className="reconnect-icon">{reconnectAttempt >= 3 ? '🔴' : '⚠️'}</span>
           <span>
             {status === 'connecting' 
               ? `Reconnecting to server${reconnectAttempt > 0 ? ` (attempt ${reconnectAttempt})` : ''}...`
-              : 'Connection lost. Attempting to reconnect...'}
+              : reconnectAttempt >= 3 
+                ? 'Unable to connect to backend'
+                : 'Connection lost. Attempting to reconnect...'}
           </span>
           <span className="reconnect-hint">Data may be stale</span>
+          <div className="reconnect-actions">
+            <button 
+              className="reconnect-btn"
+              onClick={async () => {
+                try {
+                  await fetch((resolvedBackendHttp || 'http://127.0.0.1:8000') + '/debug/resync?exchange=binance', { method: 'POST' });
+                  window.location.reload();
+                } catch {
+                  window.location.reload();
+                }
+              }}
+            >
+              🔄 Retry
+            </button>
+            <button 
+              className="reconnect-btn"
+              onClick={() => window.open('/about#troubleshooting', '_blank')}
+            >
+              ❓ Help
+            </button>
+          </div>
+          {reconnectAttempt >= 3 && (
+            <div className="reconnect-tips">
+              💡 Tips: Check that backend is running on port 8000 • Try <code style={{ background: 'rgba(0,0,0,0.2)', padding: '1px 4px', borderRadius: 3 }}>python -m uvicorn app.main:app</code> in backend folder
+            </div>
+          )}
         </div>
       )}
       
@@ -2094,6 +2122,8 @@ function DetailsModal({
 }) {
   
   const [activeTab, setActiveTab] = useState<'overview' | 'plan' | 'indicators' | 'news'>('overview');
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
+  const toggleSection = (key: string) => setCollapsedSections(prev => ({ ...prev, [key]: !prev[key] }));
   const exchange = row.exchange || 'binance';
   const symbol = row.symbol;
 
@@ -2530,25 +2560,36 @@ function DetailsModal({
                 )}
 
                 {/* Price Charts */}
-                <div className="chartsGrid" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
-                  <style jsx>{`
-                    @media (min-width: 640px) {
-                      .chartsGrid {
-                        grid-template-columns: 1fr 1fr !important;
-                      }
-                    }
-                  `}</style>
-                  <div className="card" style={{ padding: 12 }}>
-                    <div className="muted" style={{ marginBottom: 8, fontSize: 12, fontWeight: 600 }}>
-                      Last 60 x 1m closes {loading ? '(loading...)' : ''}
-                    </div>
-                    <Sparkline data={closes || []} />
+                <div style={{ marginTop: 8 }}>
+                  <div 
+                    className="collapsible-header" 
+                    onClick={() => toggleSection('charts')}
+                  >
+                    <span className="collapsible-title">📈 Price & OI Charts</span>
+                    <span className={`collapsible-toggle ${collapsedSections['charts'] ? '' : 'expanded'}`}>▼</span>
                   </div>
-                  <div className="card" style={{ padding: 12 }}>
-                    <div className="muted" style={{ marginBottom: 8, fontSize: 12, fontWeight: 600 }}>
-                      Open Interest Δ (last 60)
+                  <div className={`collapsible-content ${collapsedSections['charts'] ? 'collapsed' : 'expanded'}`}>
+                    <div className="chartsGrid" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
+                      <style jsx>{`
+                        @media (min-width: 640px) {
+                          .chartsGrid {
+                            grid-template-columns: 1fr 1fr !important;
+                          }
+                        }
+                      `}</style>
+                      <div className="card" style={{ padding: 12 }}>
+                        <div className="muted" style={{ marginBottom: 8, fontSize: 12, fontWeight: 600 }}>
+                          Last 60 x 1m closes {loading ? '(loading...)' : ''}
+                        </div>
+                        <Sparkline data={closes || []} />
+                      </div>
+                      <div className="card" style={{ padding: 12 }}>
+                        <div className="muted" style={{ marginBottom: 8, fontSize: 12, fontWeight: 600 }}>
+                          Open Interest Δ (last 60)
+                        </div>
+                        <Sparkline data={toDeltaSeries(oi || [])} color={deltaColor(oi || [])} />
+                      </div>
                     </div>
-                    <Sparkline data={toDeltaSeries(oi || [])} color={deltaColor(oi || [])} />
                   </div>
                 </div>
 
@@ -2559,7 +2600,14 @@ function DetailsModal({
                   </div>
                 ) : fundingRate !== null && fundingRate !== undefined ? (
                   <div style={{ marginTop: 16 }}>
-                    <div className="muted" style={{ fontSize: 12, marginBottom: 8, fontWeight: 600 }}>💰 Funding Rate (Perpetual)</div>
+                    <div 
+                      className="collapsible-header" 
+                      onClick={() => toggleSection('funding')}
+                    >
+                      <span className="collapsible-title">💰 Funding Rate (Perpetual)</span>
+                      <span className={`collapsible-toggle ${collapsedSections['funding'] ? '' : 'expanded'}`}>▼</span>
+                    </div>
+                    <div className={`collapsible-content ${collapsedSections['funding'] ? 'collapsed' : 'expanded'}`}>
                     <div className="card" style={{ padding: 16, background: 'rgba(0,0,0,0.2)' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                         <div>
@@ -2601,13 +2649,21 @@ function DetailsModal({
                         )}
                       </div>
                     </div>
+                    </div>
                   </div>
                 ) : null}
 
                 {/* Long/Short Ratio Section */}
                 {longShortRatio && (
                   <div style={{ marginTop: 16 }}>
-                    <div className="muted" style={{ fontSize: 12, marginBottom: 8, fontWeight: 600 }}>📊 Long/Short Ratio</div>
+                    <div 
+                      className="collapsible-header" 
+                      onClick={() => toggleSection('lsratio')}
+                    >
+                      <span className="collapsible-title">📊 Long/Short Ratio</span>
+                      <span className={`collapsible-toggle ${collapsedSections['lsratio'] ? '' : 'expanded'}`}>▼</span>
+                    </div>
+                    <div className={`collapsible-content ${collapsedSections['lsratio'] ? 'collapsed' : 'expanded'}`}>
                     <div className="card" style={{ padding: 16, background: 'rgba(0,0,0,0.2)' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                         {/* Visual Bar */}
@@ -2702,13 +2758,21 @@ function DetailsModal({
                         )}
                       </div>
                     </div>
+                    </div>
                   </div>
                 )}
 
                 {/* Liquidations Section */}
                 {(liquidationSummary && liquidationSummary.recent_count > 0) && (
                   <div style={{ marginTop: 16 }}>
-                    <div className="muted" style={{ fontSize: 12, marginBottom: 8, fontWeight: 600 }}>💥 Recent Liquidations</div>
+                    <div 
+                      className="collapsible-header" 
+                      onClick={() => toggleSection('liquidations')}
+                    >
+                      <span className="collapsible-title">💥 Recent Liquidations ({liquidationSummary.recent_count})</span>
+                      <span className={`collapsible-toggle ${collapsedSections['liquidations'] ? '' : 'expanded'}`}>▼</span>
+                    </div>
+                    <div className={`collapsible-content ${collapsedSections['liquidations'] ? 'collapsed' : 'expanded'}`}>
                     <div className="card" style={{ padding: 16, background: 'rgba(0,0,0,0.2)' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                         {/* Summary Stats */}
@@ -2808,6 +2872,7 @@ function DetailsModal({
                           </div>
                         )}
                       </div>
+                    </div>
                     </div>
                   </div>
                 )}
@@ -3315,16 +3380,16 @@ function DetailsModal({
                           <div style={{ fontSize: 10, color: '#666', fontWeight: 400 }}>Relative Strength</div>
                         </td>
                         {[
-                          { val: (row as any).rsi_1h, label: '1h' },
-                          { val: (row as any).rsi_4h, label: '4h' },
-                          { val: (row as any).rsi_1d, label: '1d' },
+                          { val: (row as any).rsi_1h, label: '1h', candles: 15 },
+                          { val: (row as any).rsi_4h, label: '4h', candles: 15 },
+                          { val: (row as any).rsi_1d, label: '1d', candles: 15 },
                         ].map((tf, i) => (
                           <td key={i} style={{ textAlign: 'center', padding: '10px 4px' }}>
                             {tf.val !== null && tf.val !== undefined ? (
                               <div style={{ 
                                 fontWeight: 700, 
                                 fontSize: 15,
-                                color: tf.val >= 70 ? '#e76f51' : tf.val <= 30 ? '#2a9d8f' : 'var(--text)' 
+                                color: tf.val >= 70 ? 'var(--overbought)' : tf.val <= 30 ? 'var(--oversold)' : 'var(--text)' 
                               }}>
                                 {tf.val.toFixed(1)}
                                 <div style={{ fontSize: 9, fontWeight: 400, marginTop: 2 }}>
@@ -3332,7 +3397,12 @@ function DetailsModal({
                                 </div>
                               </div>
                             ) : (
-                              <span style={{ color: '#555', fontSize: 11 }}>—</span>
+                              <span 
+                                style={{ color: '#555', fontSize: 11, cursor: 'help' }}
+                                title={`Collecting ${tf.label} candles... Need ${tf.candles}+ for RSI calculation`}
+                              >
+                                <span className="skeleton-loader" style={{ display: 'inline-block', width: 24, height: 14 }} />
+                              </span>
                             )}
                           </td>
                         ))}
@@ -3345,16 +3415,16 @@ function DetailsModal({
                           <div style={{ fontSize: 10, color: '#666', fontWeight: 400 }}>Momentum</div>
                         </td>
                         {[
-                          { val: (row as any).macd_histogram_1h, label: '1h' },
-                          { val: (row as any).macd_histogram_4h, label: '4h' },
-                          { val: (row as any).macd_histogram_1d, label: '1d' },
+                          { val: (row as any).macd_histogram_1h, label: '1h', candles: 35 },
+                          { val: (row as any).macd_histogram_4h, label: '4h', candles: 35 },
+                          { val: (row as any).macd_histogram_1d, label: '1d', candles: 35 },
                         ].map((tf, i) => (
                           <td key={i} style={{ textAlign: 'center', padding: '10px 4px' }}>
                             {tf.val !== null && tf.val !== undefined ? (
                               <div style={{ 
                                 fontWeight: 700, 
                                 fontSize: 14,
-                                color: tf.val >= 0 ? '#3ee145' : '#e13e3e' 
+                                color: tf.val >= 0 ? 'var(--up)' : 'var(--down)' 
                               }}>
                                 {tf.val >= 0 ? '+' : ''}{tf.val.toFixed(3)}
                                 <div style={{ fontSize: 9, fontWeight: 400, marginTop: 2 }}>
@@ -3362,7 +3432,12 @@ function DetailsModal({
                                 </div>
                               </div>
                             ) : (
-                              <span style={{ color: '#555', fontSize: 11 }}>—</span>
+                              <span 
+                                style={{ color: '#555', fontSize: 11, cursor: 'help' }}
+                                title={`Collecting ${tf.label} candles... Need ${tf.candles}+ for MACD calculation`}
+                              >
+                                <span className="skeleton-loader" style={{ display: 'inline-block', width: 24, height: 14 }} />
+                              </span>
                             )}
                           </td>
                         ))}
@@ -3375,16 +3450,16 @@ function DetailsModal({
                           <div style={{ fontSize: 10, color: '#666', fontWeight: 400 }}>Overbought/Oversold</div>
                         </td>
                         {[
-                          { val: (row as any).stoch_k_1h, label: '1h' },
-                          { val: (row as any).stoch_k_4h, label: '4h' },
-                          { val: (row as any).stoch_k_1d, label: '1d' },
+                          { val: (row as any).stoch_k_1h, label: '1h', candles: 35 },
+                          { val: (row as any).stoch_k_4h, label: '4h', candles: 35 },
+                          { val: (row as any).stoch_k_1d, label: '1d', candles: 35 },
                         ].map((tf, i) => (
                           <td key={i} style={{ textAlign: 'center', padding: '10px 4px' }}>
                             {tf.val !== null && tf.val !== undefined ? (
                               <div style={{ 
                                 fontWeight: 700, 
                                 fontSize: 15,
-                                color: tf.val >= 80 ? '#e76f51' : tf.val <= 20 ? '#2a9d8f' : 'var(--text)' 
+                                color: tf.val >= 80 ? 'var(--overbought)' : tf.val <= 20 ? 'var(--oversold)' : 'var(--text)' 
                               }}>
                                 {tf.val.toFixed(1)}
                                 <div style={{ fontSize: 9, fontWeight: 400, marginTop: 2 }}>
@@ -3392,7 +3467,12 @@ function DetailsModal({
                                 </div>
                               </div>
                             ) : (
-                              <span style={{ color: '#555', fontSize: 11 }}>—</span>
+                              <span 
+                                style={{ color: '#555', fontSize: 11, cursor: 'help' }}
+                                title={`Collecting ${tf.label} candles... Need ${tf.candles}+ for Stoch RSI calculation`}
+                              >
+                                <span className="skeleton-loader" style={{ display: 'inline-block', width: 24, height: 14 }} />
+                              </span>
                             )}
                           </td>
                         ))}
@@ -3410,14 +3490,18 @@ function DetailsModal({
                       <div style={{ fontSize: 10, color: '#888', marginBottom: 4 }}>RSI</div>
                       {row.rsi_14 != null ? (
                         <>
-                          <div style={{ fontSize: 20, fontWeight: 700, color: row.rsi_14 >= 70 ? '#e76f51' : row.rsi_14 <= 30 ? '#2a9d8f' : 'var(--text)' }}>
+                          <div style={{ fontSize: 20, fontWeight: 700, color: row.rsi_14 >= 70 ? 'var(--overbought)' : row.rsi_14 <= 30 ? 'var(--oversold)' : 'var(--text)' }}>
                             {row.rsi_14.toFixed(1)}
                           </div>
                           <div style={{ marginTop: 4, height: 3, background: 'rgba(255,255,255,0.1)', borderRadius: 2, overflow: 'hidden' }}>
-                            <div style={{ width: `${row.rsi_14}%`, height: '100%', background: row.rsi_14 >= 70 ? '#e76f51' : row.rsi_14 <= 30 ? '#2a9d8f' : '#4a9eff' }} />
+                            <div style={{ width: `${row.rsi_14}%`, height: '100%', background: row.rsi_14 >= 70 ? 'var(--overbought)' : row.rsi_14 <= 30 ? 'var(--oversold)' : 'var(--accent)' }} />
                           </div>
                         </>
-                      ) : <span style={{ color: '#555' }}>—</span>}
+                      ) : (
+                        <span style={{ color: '#555', cursor: 'help' }} title="Collecting 15m candles... Need 15+ for RSI">
+                          <span className="skeleton-loader" style={{ display: 'inline-block', width: 32, height: 20, marginTop: 4 }} />
+                        </span>
+                      )}
                     </div>
                     
                     {/* MACD Mini Card */}
@@ -3425,14 +3509,18 @@ function DetailsModal({
                       <div style={{ fontSize: 10, color: '#888', marginBottom: 4 }}>MACD</div>
                       {row.macd != null ? (
                         <>
-                          <div style={{ fontSize: 14, fontWeight: 700, color: (row.macd || 0) >= 0 ? '#3ee145' : '#e13e3e' }}>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: (row.macd || 0) >= 0 ? 'var(--up)' : 'var(--down)' }}>
                             {row.macd.toFixed(3)}
                           </div>
                           <div style={{ fontSize: 10, color: '#666', marginTop: 2 }}>
                             Sig: {row.macd_signal?.toFixed(3) ?? '—'}
                           </div>
                         </>
-                      ) : <span style={{ color: '#555' }}>—</span>}
+                      ) : (
+                        <span style={{ color: '#555', cursor: 'help' }} title="Collecting 15m candles... Need 35+ for MACD">
+                          <span className="skeleton-loader" style={{ display: 'inline-block', width: 32, height: 20, marginTop: 4 }} />
+                        </span>
+                      )}
                     </div>
                     
                     {/* Stoch RSI Mini Card */}
@@ -3441,17 +3529,21 @@ function DetailsModal({
                       {row.stoch_k != null ? (
                         <>
                           <div style={{ fontSize: 14, fontWeight: 700 }}>
-                            <span style={{ color: row.stoch_k >= 80 ? '#e76f51' : row.stoch_k <= 20 ? '#2a9d8f' : 'var(--text)' }}>
+                            <span style={{ color: row.stoch_k >= 80 ? 'var(--overbought)' : row.stoch_k <= 20 ? 'var(--oversold)' : 'var(--text)' }}>
                               {row.stoch_k.toFixed(1)}
                             </span>
                             <span style={{ color: '#666', margin: '0 2px' }}>/</span>
-                            <span style={{ color: (row.stoch_d || 0) >= 80 ? '#e76f51' : (row.stoch_d || 0) <= 20 ? '#2a9d8f' : 'var(--text)' }}>
+                            <span style={{ color: (row.stoch_d || 0) >= 80 ? 'var(--overbought)' : (row.stoch_d || 0) <= 20 ? 'var(--oversold)' : 'var(--text)' }}>
                               {row.stoch_d?.toFixed(1) ?? '—'}
                             </span>
                           </div>
                           <div style={{ fontSize: 9, color: '#666', marginTop: 2 }}>%K / %D</div>
                         </>
-                      ) : <span style={{ color: '#555' }}>—</span>}
+                      ) : (
+                        <span style={{ color: '#555', cursor: 'help' }} title="Collecting 15m candles... Need 35+ for Stoch RSI">
+                          <span className="skeleton-loader" style={{ display: 'inline-block', width: 32, height: 20, marginTop: 4 }} />
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
