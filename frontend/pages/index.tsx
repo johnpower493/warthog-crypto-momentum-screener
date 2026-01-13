@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import MobileSymbolCard from '../components/MobileSymbolCard';
 
 type Metric = {
   symbol: string;
@@ -168,6 +169,11 @@ export default function Home() {
   const [resolvedBackendHttp, setResolvedBackendHttp] = useState<string>(process.env.NEXT_PUBLIC_BACKEND_HTTP || '');
   const [resolvedWsUrl, setResolvedWsUrl] = useState<string>(process.env.NEXT_PUBLIC_BACKEND_WS || '');
   const [isClient, setIsClient] = useState(false);
+  
+  // Mobile detection for card view
+  const [isMobile, setIsMobile] = useState(false);
+  // Manual override for card/table view: null = auto (use isMobile), 'card' = force cards, 'table' = force table
+  const [viewMode, setViewMode] = useState<'auto' | 'card' | 'table'>('auto');
   const binState = useRef<Map<string, Metric>>(new Map());
   const httpState = useRef<Map<string, Metric>>(new Map());
   const [modal, setModal] = useState<{
@@ -354,10 +360,19 @@ export default function Home() {
   }, [mobileMode]);
 
   const col = (k: string) => !!cols[k];
+  
+  // Determine whether to show card view: manual override or auto-detect mobile
+  const showCardView = viewMode === 'card' || (viewMode === 'auto' && isMobile);
 
   useEffect(() => {
     // Resolve URLs + hydrate persisted state from localStorage (client-only)
     setIsClient(true);
+    
+    // Mobile detection
+    const checkMobile = () => setIsMobile(window.innerWidth <= 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    
     try {
       const backendHttp = process.env.NEXT_PUBLIC_BACKEND_HTTP || `${window.location.protocol}//${window.location.hostname}:8000`;
       setResolvedBackendHttp(backendHttp);
@@ -397,6 +412,8 @@ export default function Home() {
     } catch {
       setColsInitialized(true);
     }
+    
+    return () => window.removeEventListener('resize', checkMobile);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -950,7 +967,7 @@ export default function Home() {
             </span>
           </div>
           <div className="group">
-            <input className="input" placeholder="Search symbol (e.g. BTC)" value={query} onChange={e=>setQuery(e.target.value)} />
+            <input className="input" placeholder="Search symbol... (press /)" value={query} onChange={e=>setQuery(e.target.value)} title="Press / to focus" />
 
             <div className="group" style={{ gap: 6 }}>
               <button
@@ -1063,6 +1080,33 @@ export default function Home() {
             </button>
             <button className={"button "+(showAlerts? 'buttonActive':'')} onClick={()=>setShowAlerts(v=>!v)} title="Toggle Alert Log">
               Alerts
+            </button>
+            <button 
+              className="button" 
+              onClick={() => {
+                const helpText = 
+                  '⌨️ KEYBOARD SHORTCUTS\n\n' +
+                  'ESC          Close modal/dialog\n' +
+                  '/            Focus search box\n' +
+                  '← →          Navigate symbols (in modal)\n' +
+                  '?            Show this help';
+                alert(helpText);
+              }}
+              title="Keyboard shortcuts (?)"
+              style={{ padding: '10px', fontSize: 14 }}
+            >
+              ⌨️
+            </button>
+            <button 
+              className={"button " + (viewMode !== 'auto' ? 'buttonActive' : '')}
+              onClick={() => {
+                // Cycle through: auto -> card -> table -> auto
+                setViewMode(prev => prev === 'auto' ? 'card' : prev === 'card' ? 'table' : 'auto');
+              }}
+              title={`View mode: ${viewMode === 'auto' ? 'Auto (mobile=cards)' : viewMode === 'card' ? 'Cards' : 'Table'} - Click to cycle`}
+              style={{ padding: '10px', fontSize: 14 }}
+            >
+              {viewMode === 'auto' ? '📱' : viewMode === 'card' ? '🃏' : '📋'}
             </button>
             <button className={"button "+(showColumns? 'buttonActive':'')} onClick={()=>setShowColumns(v=>!v)} title="Choose table columns">
               Columns
@@ -1257,164 +1301,182 @@ export default function Home() {
             No results for current selection. Try Reset or choose a different preset.
           </div>
         )}
-        <div className="tableWrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th></th>
-                <th className="sortable" onClick={()=>handleHeaderClick('symbol')}>
-                  Symbol {sortKey==='symbol' && (sortDir==='desc'?'↓':'↑')}
-                </th>
-                {col('exchange') && <th className="hide-xs">Exchange</th>}
-                {col('signal') && (
-                  <th className="sortable" onClick={()=>handleHeaderClick('signal_score')}>
-                    Signal {sortKey==='signal_score' && (sortDir==='desc'?'↓':'↑')}
+        
+        {/* Card View (mobile or manual toggle) */}
+        {showCardView ? (
+          <div style={{ padding: 10 }}>
+            {sorted.map(r => (
+              <MobileSymbolCard
+                key={idOf(r)}
+                metric={r}
+                isFavorite={favs.includes(idOf(r))}
+                hasPosition={openPositions.includes(idOf(r))}
+                onToggleFavorite={() => toggleFav(idOf(r), favs, setFavs)}
+                onViewDetails={() => openDetails(r)}
+              />
+            ))}
+          </div>
+        ) : (
+          /* Desktop Table View */
+          <div className="tableWrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th className="sortable" onClick={()=>handleHeaderClick('symbol')}>
+                    Symbol {sortKey==='symbol' && (sortDir==='desc'?'↓':'↑')}
                   </th>
-                )}
-                {col('impulse') && (
-                  <th className="sortable hide-sm" onClick={()=>handleHeaderClick('impulse_score')}>
-                    Impulse {sortKey==='impulse_score' && (sortDir==='desc'?'↓':'↑')}
-                  </th>
-                )}
-                {col('marketcap') && (
-                  <th className="sortable hide-sm" onClick={()=>handleHeaderClick('market_cap')}>
-                    Market Cap {sortKey==='market_cap' && (sortDir==='desc'?'↓':'↑')}
-                  </th>
-                )}
-                <th className="sortable" onClick={()=>handleHeaderClick('last_price')}>
-                  Last {sortKey==='last_price' && (sortDir==='desc'?'↓':'↑')}
-                </th>
-                {col('chg1m') && (
-                  <th className="sortable hide-sm" onClick={()=>handleHeaderClick('change_1m')}>
-                    1m % {sortKey==='change_1m' && (sortDir==='desc'?'↓':'↑')}
-                  </th>
-                )}
-                {col('chg5m') && (
-                  <th className="sortable" onClick={()=>handleHeaderClick('change_5m')}>
-                    5m % {sortKey==='change_5m' && (sortDir==='desc'?'↓':'↑')}
-                  </th>
-                )}
-                {col('chg15m') && (
-                  <th className="sortable" onClick={()=>handleHeaderClick('change_15m')}>
-                    15m % {sortKey==='change_15m' && (sortDir==='desc'?'↓':'↑')}
-                  </th>
-                )}
-                {col('chg60m') && (
-                  <th className="sortable hide-md" onClick={()=>handleHeaderClick('change_60m')}>
-                    60m % {sortKey==='change_60m' && (sortDir==='desc'?'↓':'↑')}
-                  </th>
-                )}
-                {col('momentum') && (
-                  <th className="sortable hide-md" onClick={()=>handleHeaderClick('momentum_score')}>
-                    Momentum {sortKey==='momentum_score' && (sortDir==='desc'?'↓':'↑')}
-                  </th>
-                )}
-                {col('mom5m') && <th className="hide-md">Mom 5m</th>}
-                {col('mom15m') && <th className="hide-md">Mom 15m</th>}
-                {col('oi') && (
-                  <th className="sortable hide-sm" onClick={()=>handleHeaderClick('open_interest')}>
-                    OI {sortKey==='open_interest' && (sortDir==='desc'?'↓':'↑')}
-                  </th>
-                )}
-                {col('oi5m') && (
-                  <th className="sortable hide-sm" onClick={()=>handleHeaderClick('oi_change_5m')}>
-                    OI Δ 5m {sortKey==='oi_change_5m' && (sortDir==='desc'?'↓':'↑')}
-                  </th>
-                )}
-                {col('oi15m') && <th className="hide-md">OI Δ 15m</th>}
-                {col('oi1h') && <th className="hide-md">OI Δ 1h</th>}
-                {col('atr') && (
-                  <th className="sortable hide-md" onClick={()=>handleHeaderClick('atr')}>
-                    ATR {sortKey==='atr' && (sortDir==='desc'?'↓':'↑')}
-                  </th>
-                )}
-                {col('volz') && (
-                  <th className="sortable hide-md" onClick={()=>handleHeaderClick('vol_zscore_1m')}>
-                    Vol Z {sortKey==='vol_zscore_1m' && (sortDir==='desc'?'↓':'↑')}
-                  </th>
-                )}
-                {col('vol1m') && <th className="hide-md">Vol 1m</th>}
-                {col('rvol1m') && <th className="hide-md">RVOL 1m</th>}
-                {col('breakout15m') && <th className="hide-md">Breakout 15m</th>}
-                {col('vwap15m') && <th className="hide-md">VWAP 15m</th>}
-                {col('action') && <th className="hide-sm">Action</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map(r => (
-                <tr key={idOf(r)} onClick={()=>openDetails(r)} style={{cursor:'pointer'}}>
-                  <td className="muted">
-                    <span className={"star "+(favs.includes(idOf(r))?'active':'')} onClick={(e)=>{e.stopPropagation(); toggleFav(idOf(r), favs, setFavs)}}>★</span>
-                  </td>
-                  <td style={{fontWeight:600}}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
-                      {r.symbol}
-                      {openPositions.includes(idOf(r)) && (
-                        <span 
-                          className="badge" 
-                          style={{
-                            fontSize: 9,
-                            background: '#3b82f6',
-                            padding: '2px 5px',
-                            fontWeight: 700,
-                            color: '#fff',
-                            borderRadius: 3,
-                            flexShrink: 0
-                          }}
-                          title="You have an open position"
-                        >
-                          OPEN
-                        </span>
-                      )}
-                    </span>
-                  </td>
-                  {col('exchange') && <td className="muted hide-xs">{r.exchange || 'binance'}</td>}
+                  {col('exchange') && <th className="hide-xs">Exchange</th>}
                   {col('signal') && (
-                    <td className={signalClass(r.signal_strength)}>
-                      {fmtSignal(r.signal_score, r.signal_strength)}
-                      {r.cipher_buy && <span className="badge" style={{marginLeft:6,fontSize:12,background:'#2a9d8f',padding:'3px 6px',fontWeight:700,color:'#fff',boxShadow:'0 0 8px rgba(42,157,143,0.6)'}}>CB↑</span>}
-                      {r.cipher_sell && <span className="badge" style={{marginLeft:6,fontSize:12,background:'#e76f51',padding:'3px 6px',fontWeight:700,color:'#fff',boxShadow:'0 0 8px rgba(231,111,81,0.6)'}}>CB↓</span>}
-                      {r.percent_r_os_reversal && <span className="badge" style={{marginLeft:6,fontSize:12,background:'#06d6a0',padding:'3px 6px',fontWeight:700,color:'#000',boxShadow:'0 0 8px rgba(6,214,160,0.6)'}}>%R↑</span>}
-                      {r.percent_r_ob_reversal && <span className="badge" style={{marginLeft:6,fontSize:12,background:'#ef476f',padding:'3px 6px',fontWeight:700,color:'#fff',boxShadow:'0 0 8px rgba(239,71,111,0.6)'}}>%R↓</span>}
-                    </td>
+                    <th className="sortable" onClick={()=>handleHeaderClick('signal_score')}>
+                      Signal {sortKey==='signal_score' && (sortDir==='desc'?'↓':'↑')}
+                    </th>
                   )}
-                  {col('impulse') && <td className={'hide-sm'}>{fmtImpulse(r.impulse_score, r.impulse_dir)}</td>}
-                  {col('marketcap') && <td className={'hide-sm'}>{fmtMarketCap(r.market_cap)}</td>}
-                  <td>{fmt(r.last_price)}</td>
-                  {col('chg1m') && <td className={pctClass(r.change_1m) + ' hide-sm'}>{fmtPct(r.change_1m)}</td>}
-                  {col('chg5m') && <td className={pctClass(r.change_5m)}>{fmtPct(r.change_5m)}</td>}
-                  {col('chg15m') && <td className={pctClass(r.change_15m)}>{fmtPct(r.change_15m)}</td>}
-                  {col('chg60m') && <td className={pctClass(r.change_60m) + ' hide-md'}>{fmtPct(r.change_60m)}</td>}
-                  {col('momentum') && <td className={momentumClass(r.momentum_score) + ' hide-md'}>{fmtMomentum(r.momentum_score)}</td>}
-                  {col('mom5m') && <td className={pctClass(r.momentum_5m) + ' hide-md'}>{fmtPct(r.momentum_5m)}</td>}
-                  {col('mom15m') && <td className={pctClass(r.momentum_15m) + ' hide-md'}>{fmtPct(r.momentum_15m)}</td>}
-                  {col('oi') && <td className={'hide-sm'}>{fmtOI(r.open_interest)}</td>}
-                  {col('oi5m') && <td className={oiClass(r.oi_change_5m) + ' hide-sm'}>{fmtOIPct(r.oi_change_5m)}</td>}
-                  {col('oi15m') && <td className={oiClass(r.oi_change_15m) + ' hide-md'}>{fmtOIPct(r.oi_change_15m)}</td>}
-                  {col('oi1h') && <td className={oiClass(r.oi_change_1h) + ' hide-md'}>{fmtOIPct(r.oi_change_1h)}</td>}
-                  {col('atr') && <td className={'hide-md'}>{fmt(r.atr)}</td>}
-                  {col('volz') && <td className={'hide-md'}>{fmt(r.vol_zscore_1m)}</td>}
-                  {col('vol1m') && <td className={'hide-md'}>{fmt(r.vol_1m)}</td>}
-                  {col('rvol1m') && <td className={'hide-md'}>{fmt(r.rvol_1m)}</td>}
-                  {col('breakout15m') && <td className={pctClass(r.breakout_15m) + ' hide-md'}>{fmtPct(r.breakout_15m)}</td>}
-                  {col('vwap15m') && <td className={'hide-md'}>{fmt(r.vwap_15m)}</td>}
-                  {col('action') && (
-                    <td className="hide-sm">
-                      <button 
-                        className="button" 
-                        onClick={(e) => handleQuickAdd(r, e)}
-                        style={{ fontSize: 11, padding: '4px 8px' }}
-                        title="Add to portfolio"
-                      >
-                        + Portfolio
-                      </button>
-                    </td>
+                  {col('impulse') && (
+                    <th className="sortable hide-sm" onClick={()=>handleHeaderClick('impulse_score')}>
+                      Impulse {sortKey==='impulse_score' && (sortDir==='desc'?'↓':'↑')}
+                    </th>
                   )}
+                  {col('marketcap') && (
+                    <th className="sortable hide-sm" onClick={()=>handleHeaderClick('market_cap')}>
+                      Market Cap {sortKey==='market_cap' && (sortDir==='desc'?'↓':'↑')}
+                    </th>
+                  )}
+                  <th className="sortable" onClick={()=>handleHeaderClick('last_price')}>
+                    Last {sortKey==='last_price' && (sortDir==='desc'?'↓':'↑')}
+                  </th>
+                  {col('chg1m') && (
+                    <th className="sortable hide-sm" onClick={()=>handleHeaderClick('change_1m')}>
+                      1m % {sortKey==='change_1m' && (sortDir==='desc'?'↓':'↑')}
+                    </th>
+                  )}
+                  {col('chg5m') && (
+                    <th className="sortable" onClick={()=>handleHeaderClick('change_5m')}>
+                      5m % {sortKey==='change_5m' && (sortDir==='desc'?'↓':'↑')}
+                    </th>
+                  )}
+                  {col('chg15m') && (
+                    <th className="sortable" onClick={()=>handleHeaderClick('change_15m')}>
+                      15m % {sortKey==='change_15m' && (sortDir==='desc'?'↓':'↑')}
+                    </th>
+                  )}
+                  {col('chg60m') && (
+                    <th className="sortable hide-md" onClick={()=>handleHeaderClick('change_60m')}>
+                      60m % {sortKey==='change_60m' && (sortDir==='desc'?'↓':'↑')}
+                    </th>
+                  )}
+                  {col('momentum') && (
+                    <th className="sortable hide-md" onClick={()=>handleHeaderClick('momentum_score')}>
+                      Momentum {sortKey==='momentum_score' && (sortDir==='desc'?'↓':'↑')}
+                    </th>
+                  )}
+                  {col('mom5m') && <th className="hide-md">Mom 5m</th>}
+                  {col('mom15m') && <th className="hide-md">Mom 15m</th>}
+                  {col('oi') && (
+                    <th className="sortable hide-sm" onClick={()=>handleHeaderClick('open_interest')}>
+                      OI {sortKey==='open_interest' && (sortDir==='desc'?'↓':'↑')}
+                    </th>
+                  )}
+                  {col('oi5m') && (
+                    <th className="sortable hide-sm" onClick={()=>handleHeaderClick('oi_change_5m')}>
+                      OI Δ 5m {sortKey==='oi_change_5m' && (sortDir==='desc'?'↓':'↑')}
+                    </th>
+                  )}
+                  {col('oi15m') && <th className="hide-md">OI Δ 15m</th>}
+                  {col('oi1h') && <th className="hide-md">OI Δ 1h</th>}
+                  {col('atr') && (
+                    <th className="sortable hide-md" onClick={()=>handleHeaderClick('atr')}>
+                      ATR {sortKey==='atr' && (sortDir==='desc'?'↓':'↑')}
+                    </th>
+                  )}
+                  {col('volz') && (
+                    <th className="sortable hide-md" onClick={()=>handleHeaderClick('vol_zscore_1m')}>
+                      Vol Z {sortKey==='vol_zscore_1m' && (sortDir==='desc'?'↓':'↑')}
+                    </th>
+                  )}
+                  {col('vol1m') && <th className="hide-md">Vol 1m</th>}
+                  {col('rvol1m') && <th className="hide-md">RVOL 1m</th>}
+                  {col('breakout15m') && <th className="hide-md">Breakout 15m</th>}
+                  {col('vwap15m') && <th className="hide-md">VWAP 15m</th>}
+                  {col('action') && <th className="hide-sm">Action</th>}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {sorted.map(r => (
+                  <tr key={idOf(r)} onClick={()=>openDetails(r)} style={{cursor:'pointer'}}>
+                    <td className="muted">
+                      <span className={"star "+(favs.includes(idOf(r))?'active':'')} onClick={(e)=>{e.stopPropagation(); toggleFav(idOf(r), favs, setFavs)}}>★</span>
+                    </td>
+                    <td style={{fontWeight:600}}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+                        {r.symbol}
+                        {openPositions.includes(idOf(r)) && (
+                          <span 
+                            className="badge" 
+                            style={{
+                              fontSize: 9,
+                              background: '#3b82f6',
+                              padding: '2px 5px',
+                              fontWeight: 700,
+                              color: '#fff',
+                              borderRadius: 3,
+                              flexShrink: 0
+                            }}
+                            title="You have an open position"
+                          >
+                            OPEN
+                          </span>
+                        )}
+                      </span>
+                    </td>
+                    {col('exchange') && <td className="muted hide-xs">{r.exchange || 'binance'}</td>}
+                    {col('signal') && (
+                      <td className={signalClass(r.signal_strength)}>
+                        {fmtSignal(r.signal_score, r.signal_strength)}
+                        {r.cipher_buy && <span className="badge" style={{marginLeft:6,fontSize:12,background:'#2a9d8f',padding:'3px 6px',fontWeight:700,color:'#fff',boxShadow:'0 0 8px rgba(42,157,143,0.6)'}}>CB↑</span>}
+                        {r.cipher_sell && <span className="badge" style={{marginLeft:6,fontSize:12,background:'#e76f51',padding:'3px 6px',fontWeight:700,color:'#fff',boxShadow:'0 0 8px rgba(231,111,81,0.6)'}}>CB↓</span>}
+                        {r.percent_r_os_reversal && <span className="badge" style={{marginLeft:6,fontSize:12,background:'#06d6a0',padding:'3px 6px',fontWeight:700,color:'#000',boxShadow:'0 0 8px rgba(6,214,160,0.6)'}}>%R↑</span>}
+                        {r.percent_r_ob_reversal && <span className="badge" style={{marginLeft:6,fontSize:12,background:'#ef476f',padding:'3px 6px',fontWeight:700,color:'#fff',boxShadow:'0 0 8px rgba(239,71,111,0.6)'}}>%R↓</span>}
+                      </td>
+                    )}
+                    {col('impulse') && <td className={'hide-sm'}>{fmtImpulse(r.impulse_score, r.impulse_dir)}</td>}
+                    {col('marketcap') && <td className={'hide-sm'}>{fmtMarketCap(r.market_cap)}</td>}
+                    <td>{fmt(r.last_price)}</td>
+                    {col('chg1m') && <td className={pctClass(r.change_1m) + ' hide-sm'}>{fmtPct(r.change_1m)}</td>}
+                    {col('chg5m') && <td className={pctClass(r.change_5m)}>{fmtPct(r.change_5m)}</td>}
+                    {col('chg15m') && <td className={pctClass(r.change_15m)}>{fmtPct(r.change_15m)}</td>}
+                    {col('chg60m') && <td className={pctClass(r.change_60m) + ' hide-md'}>{fmtPct(r.change_60m)}</td>}
+                    {col('momentum') && <td className={momentumClass(r.momentum_score) + ' hide-md'}>{fmtMomentum(r.momentum_score)}</td>}
+                    {col('mom5m') && <td className={pctClass(r.momentum_5m) + ' hide-md'}>{fmtPct(r.momentum_5m)}</td>}
+                    {col('mom15m') && <td className={pctClass(r.momentum_15m) + ' hide-md'}>{fmtPct(r.momentum_15m)}</td>}
+                    {col('oi') && <td className={'hide-sm'}>{fmtOI(r.open_interest)}</td>}
+                    {col('oi5m') && <td className={oiClass(r.oi_change_5m) + ' hide-sm'}>{fmtOIPct(r.oi_change_5m)}</td>}
+                    {col('oi15m') && <td className={oiClass(r.oi_change_15m) + ' hide-md'}>{fmtOIPct(r.oi_change_15m)}</td>}
+                    {col('oi1h') && <td className={oiClass(r.oi_change_1h) + ' hide-md'}>{fmtOIPct(r.oi_change_1h)}</td>}
+                    {col('atr') && <td className={'hide-md'}>{fmt(r.atr)}</td>}
+                    {col('volz') && <td className={'hide-md'}>{fmt(r.vol_zscore_1m)}</td>}
+                    {col('vol1m') && <td className={'hide-md'}>{fmt(r.vol_1m)}</td>}
+                    {col('rvol1m') && <td className={'hide-md'}>{fmt(r.rvol_1m)}</td>}
+                    {col('breakout15m') && <td className={pctClass(r.breakout_15m) + ' hide-md'}>{fmtPct(r.breakout_15m)}</td>}
+                    {col('vwap15m') && <td className={'hide-md'}>{fmt(r.vwap_15m)}</td>}
+                    {col('action') && (
+                      <td className="hide-sm">
+                        <button 
+                          className="button" 
+                          onClick={(e) => handleQuickAdd(r, e)}
+                          style={{ fontSize: 11, padding: '4px 8px' }}
+                          title="Add to portfolio"
+                        >
+                          + Portfolio
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
         <div className="footer">
           <div>WS: <code suppressHydrationWarning>{isClient ? (resolvedWsUrl || '—') : '—'}</code></div>
           <div className="muted">Last update: {lastUpdate? new Date(lastUpdate).toLocaleTimeString(): '—'}</div>
@@ -2246,7 +2308,7 @@ function DetailsModal({
                 + Position
               </button>
             )}
-            <button className="button" onClick={onClose} style={{ fontWeight: 600 }}>
+            <button className="button" onClick={onClose} style={{ fontWeight: 600 }} title="Close (Esc)">
               ✕
             </button>
           </div>
@@ -2255,7 +2317,7 @@ function DetailsModal({
         {/* Tab Navigation */}
         <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', padding: '0 8px', background: 'var(--bg-secondary)', overflowX: 'auto', overflowY: 'hidden', WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none', msOverflowStyle: 'none' }} className="hide-scrollbar">
           <button 
-            className={`button ${activeTab === 'overview' ? '' : ''}`}
+            className="button"
             onClick={() => setActiveTab('overview')}
             style={{ 
               border: 'none',
@@ -2273,7 +2335,7 @@ function DetailsModal({
             Overview
           </button>
           <button 
-            className={`button ${activeTab === 'plan' ? '' : ''}`}
+            className="button"
             onClick={() => setActiveTab('plan')}
             style={{ 
               border: 'none',
@@ -2291,7 +2353,7 @@ function DetailsModal({
             Plan
           </button>
           <button 
-            className={`button ${activeTab === 'indicators' ? '' : ''}`}
+            className="button"
             onClick={() => setActiveTab('indicators')}
             style={{ 
               border: 'none',
@@ -2309,7 +2371,7 @@ function DetailsModal({
             📊
           </button>
           <button 
-            className={`button ${activeTab === 'news' ? '' : ''}`}
+            className="button"
             onClick={() => setActiveTab('news')}
             style={{ 
               border: 'none',
@@ -3535,9 +3597,7 @@ function DetailsModal({
                 {news && news.length > 0 && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                     {news.map((article) => (
-                      <div key={article.id} className="card" style={{ padding: 16, transition: 'all 0.2s', cursor: 'pointer' }} 
-                           onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
-                           onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+                      <div key={article.id} className="card" style={{ padding: 16, cursor: 'pointer' }} 
                            onClick={() => window.open(article.url, '_blank')}>
                         <div style={{ display: 'flex', gap: 12 }}>
                           {article.image_url && (

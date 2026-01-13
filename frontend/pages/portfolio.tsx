@@ -1,5 +1,23 @@
 import { useEffect, useState } from 'react';
 
+// Toast component for notifications
+function Toast({ message, type = 'error', onClose }: { 
+  message: string; 
+  type?: 'success' | 'error' | 'info';
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const timer = setTimeout(onClose, 4000);
+    return () => clearTimeout(timer);
+  }, [onClose]);
+
+  return (
+    <div className={`toast toast-${type}`}>
+      {message}
+    </div>
+  );
+}
+
 type Position = {
   id: number;
   exchange: string;
@@ -84,6 +102,12 @@ export default function PortfolioPage() {
     notes: '',
   });
 
+  // Toast notification state
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'error') => {
+    setToast({ message, type });
+  };
+
   useEffect(() => {
     const resolved = process.env.NEXT_PUBLIC_BACKEND_HTTP || 
       (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}:8000` : 'http://127.0.0.1:8000');
@@ -128,7 +152,7 @@ export default function PortfolioPage() {
 
   const handleAddPosition = async () => {
     if (!newPosition.symbol || !newPosition.entry_price || !newPosition.quantity) {
-      alert('Please fill in required fields: Symbol, Entry Price, Quantity');
+      showToast('Please fill in required fields: Symbol, Entry Price, Quantity', 'error');
       return;
     }
 
@@ -161,12 +185,13 @@ export default function PortfolioPage() {
           notes: '',
         });
         loadData();
+        showToast('Position added successfully', 'success');
       } else {
-        alert('Failed to add position');
+        showToast('Failed to add position', 'error');
       }
     } catch (e) {
       console.error('Error adding position:', e);
-      alert('Error adding position');
+      showToast('Error adding position', 'error');
     }
   };
 
@@ -187,18 +212,19 @@ export default function PortfolioPage() {
       if (resp.ok) {
         setEditingPosition(null);
         loadData();
+        showToast('Position updated successfully', 'success');
       } else {
-        alert('Failed to update position');
+        showToast('Failed to update position', 'error');
       }
     } catch (e) {
       console.error('Error updating position:', e);
-      alert('Error updating position');
+      showToast('Error updating position', 'error');
     }
   };
 
   const handleClosePosition = async () => {
     if (!closingPosition || !closeForm.exit_price) {
-      alert('Please enter exit price');
+      showToast('Please enter exit price', 'error');
       return;
     }
 
@@ -216,12 +242,13 @@ export default function PortfolioPage() {
         setClosingPosition(null);
         setCloseForm({ exit_price: '', notes: '' });
         loadData();
+        showToast('Position closed successfully', 'success');
       } else {
-        alert('Failed to close position');
+        showToast('Failed to close position', 'error');
       }
     } catch (e) {
       console.error('Error closing position:', e);
-      alert('Error closing position');
+      showToast('Error closing position', 'error');
     }
   };
 
@@ -235,12 +262,13 @@ export default function PortfolioPage() {
 
       if (resp.ok) {
         loadData();
+        showToast('Position deleted', 'info');
       } else {
-        alert('Failed to delete position');
+        showToast('Failed to delete position', 'error');
       }
     } catch (e) {
       console.error('Error deleting position:', e);
-      alert('Error deleting position');
+      showToast('Error deleting position', 'error');
     }
   };
 
@@ -707,6 +735,15 @@ export default function PortfolioPage() {
           font-family: inherit;
         }
       `}</style>
+
+      {/* Toast notification */}
+      {toast && (
+        <Toast 
+          message={toast.message} 
+          type={toast.type} 
+          onClose={() => setToast(null)} 
+        />
+      )}
     </div>
   );
 }

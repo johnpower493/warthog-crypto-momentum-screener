@@ -1,5 +1,50 @@
 import { useEffect, useState } from 'react';
 
+function SkeletonLoader({ width = '100%', height = 20 }: { width?: string | number; height?: number }) {
+  return (
+    <div 
+      className="skeleton-loader"
+      style={{ width, height }}
+    />
+  );
+}
+
+function SkeletonCard() {
+  return (
+    <div className="card card-static">
+      <SkeletonLoader width="60%" height={14} />
+      <div style={{ marginTop: 8 }}>
+        <SkeletonLoader width="40%" height={28} />
+      </div>
+    </div>
+  );
+}
+
+function SkeletonTable({ rows = 5, cols = 6 }: { rows?: number; cols?: number }) {
+  return (
+    <div className="tableWrap">
+      <table className="table">
+        <thead>
+          <tr>
+            {Array.from({ length: cols }).map((_, i) => (
+              <th key={i}><SkeletonLoader width="70%" height={14} /></th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {Array.from({ length: rows }).map((_, rowIdx) => (
+            <tr key={rowIdx}>
+              {Array.from({ length: cols }).map((_, colIdx) => (
+                <td key={colIdx}><SkeletonLoader width={colIdx === 0 ? '50%' : '80%'} height={16} /></td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 type Summary = {
   window_days: number;
   exchange: string;
@@ -195,31 +240,44 @@ export default function AnalysisPage() {
 
         <div style={{padding:12}}>
           <div className="grid" style={{gridTemplateColumns:'repeat(auto-fit, minmax(220px, 1fr))'}}>
-            <div className="card">
-              <div className="muted">Trades (resolved)</div>
-              <div style={{fontSize:24, fontWeight:800}}>{summary?.n_trades ?? '—'}</div>
-            </div>
-            <div className="card">
-              <div className="muted">Win rate</div>
-              <div style={{fontSize:24, fontWeight:800}}>{summary ? (summary.win_rate*100).toFixed(1)+'%' : '—'}</div>
-            </div>
-            <div className="card">
-              <div className="muted">Avg R</div>
-              <div style={{fontSize:24, fontWeight:800}}>{summary ? Number(summary.avg_r).toFixed(2) : '—'}</div>
-            </div>
-            <div className="card">
-              <div className="muted">Avg MAE (R)</div>
-              <div style={{fontSize:24, fontWeight:800}}>{summary ? Number(summary.avg_mae_r).toFixed(2) : '—'}</div>
-            </div>
-            <div className="card">
-              <div className="muted">Avg MFE (R)</div>
-              <div style={{fontSize:24, fontWeight:800}}>{summary ? Number(summary.avg_mfe_r).toFixed(2) : '—'}</div>
-            </div>
-            <div className="card">
-              <div className="muted">Avg bars to resolve</div>
-              <div style={{fontSize:24, fontWeight:800}}>{summary ? Number(summary.avg_bars_to_resolve).toFixed(1) : '—'}</div>
-              <div className="muted" style={{fontSize:12}}>15m bars (max horizon 96)</div>
-            </div>
+            {status === 'loading' && !summary ? (
+              <>
+                <SkeletonCard />
+                <SkeletonCard />
+                <SkeletonCard />
+                <SkeletonCard />
+                <SkeletonCard />
+                <SkeletonCard />
+              </>
+            ) : (
+              <>
+                <div className="card">
+                  <div className="muted">Trades (resolved)</div>
+                  <div style={{fontSize:24, fontWeight:800}}>{summary?.n_trades ?? '—'}</div>
+                </div>
+                <div className="card">
+                  <div className="muted">Win rate</div>
+                  <div style={{fontSize:24, fontWeight:800}}>{summary ? (summary.win_rate*100).toFixed(1)+'%' : '—'}</div>
+                </div>
+                <div className="card">
+                  <div className="muted">Avg R</div>
+                  <div style={{fontSize:24, fontWeight:800}}>{summary ? Number(summary.avg_r).toFixed(2) : '—'}</div>
+                </div>
+                <div className="card">
+                  <div className="muted">Avg MAE (R)</div>
+                  <div style={{fontSize:24, fontWeight:800}}>{summary ? Number(summary.avg_mae_r).toFixed(2) : '—'}</div>
+                </div>
+                <div className="card">
+                  <div className="muted">Avg MFE (R)</div>
+                  <div style={{fontSize:24, fontWeight:800}}>{summary ? Number(summary.avg_mfe_r).toFixed(2) : '—'}</div>
+                </div>
+                <div className="card">
+                  <div className="muted">Avg bars to resolve</div>
+                  <div style={{fontSize:24, fontWeight:800}}>{summary ? Number(summary.avg_bars_to_resolve).toFixed(1) : '—'}</div>
+                  <div className="muted" style={{fontSize:12}}>15m bars (max horizon 96)</div>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -235,62 +293,70 @@ export default function AnalysisPage() {
               </select>
             </div>
           </div>
-          <div className="tableWrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Grade</th>
-                  <th>TF</th>
-                  <th>Side</th>
-                  <th>Trades</th>
-                  <th>Win %</th>
-                  <th>Avg R</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedBreakdown.map((r, i) => (
-                  <tr key={i}>
-                    <td style={{fontWeight:800}}>{r.setup_grade}</td>
-                    <td className="muted">{r.source_tf}</td>
-                    <td className={r.signal==='BUY'?'chgUp':'chgDown'} style={{fontWeight:800}}>{r.signal}</td>
-                    <td>{r.n}</td>
-                    <td>{(r.win_rate*100).toFixed(1)}%</td>
-                    <td>{Number(r.avg_r).toFixed(2)}</td>
+          {status === 'loading' && breakdown.length === 0 ? (
+            <SkeletonTable rows={5} cols={6} />
+          ) : (
+            <div className="tableWrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Grade</th>
+                    <th>TF</th>
+                    <th>Side</th>
+                    <th>Trades</th>
+                    <th>Win %</th>
+                    <th>Avg R</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {sortedBreakdown.map((r, i) => (
+                    <tr key={i}>
+                      <td style={{fontWeight:800}}>{r.setup_grade}</td>
+                      <td className="muted">{r.source_tf}</td>
+                      <td className={r.signal==='BUY'?'chgUp':'chgDown'} style={{fontWeight:800}}>{r.signal}</td>
+                      <td>{r.n}</td>
+                      <td>{(r.win_rate*100).toFixed(1)}%</td>
+                      <td>{Number(r.avg_r).toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         <div style={{padding:12}}>
           <h3 style={{marginTop:0}}>Best buckets (Grade × TF × Side)</h3>
-          <div className="tableWrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Grade</th>
-                  <th>TF</th>
-                  <th>Side</th>
-                  <th>Trades</th>
-                  <th>Win %</th>
-                  <th>Avg R</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedBestBuckets.map((r, i) => (
-                  <tr key={i}>
-                    <td style={{fontWeight:800}}>{r.setup_grade}</td>
-                    <td className="muted">{r.source_tf}</td>
-                    <td className={r.signal==='BUY'?'chgUp':'chgDown'} style={{fontWeight:800}}>{r.signal}</td>
-                    <td>{r.n}</td>
-                    <td>{(r.win_rate*100).toFixed(1)}%</td>
-                    <td>{Number(r.avg_r).toFixed(2)}</td>
+          {status === 'loading' && bestBuckets.length === 0 ? (
+            <SkeletonTable rows={5} cols={6} />
+          ) : (
+            <div className="tableWrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Grade</th>
+                    <th>TF</th>
+                    <th>Side</th>
+                    <th>Trades</th>
+                    <th>Win %</th>
+                    <th>Avg R</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {sortedBestBuckets.map((r, i) => (
+                    <tr key={i}>
+                      <td style={{fontWeight:800}}>{r.setup_grade}</td>
+                      <td className="muted">{r.source_tf}</td>
+                      <td className={r.signal==='BUY'?'chgUp':'chgDown'} style={{fontWeight:800}}>{r.signal}</td>
+                      <td>{r.n}</td>
+                      <td>{(r.win_rate*100).toFixed(1)}%</td>
+                      <td>{Number(r.avg_r).toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         <div style={{padding:12}}>
@@ -305,58 +371,66 @@ export default function AnalysisPage() {
               </select>
             </div>
           </div>
-          <div className="tableWrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Exchange</th>
-                  <th>Symbol</th>
-                  <th>Trades</th>
-                  <th>Win %</th>
-                  <th>Avg R</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedBest.map((r, i) => (
-                  <tr key={i}>
-                    <td className="muted">{r.exchange}</td>
-                    <td style={{fontWeight:800}}>{r.symbol}</td>
-                    <td>{r.n}</td>
-                    <td>{(r.win_rate*100).toFixed(1)}%</td>
-                    <td className={r.avg_r<0?'chgDown':'chgUp'} style={{fontWeight:800}}>{Number(r.avg_r).toFixed(2)}</td>
+          {status === 'loading' && best.length === 0 ? (
+            <SkeletonTable rows={5} cols={5} />
+          ) : (
+            <div className="tableWrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Exchange</th>
+                    <th>Symbol</th>
+                    <th>Trades</th>
+                    <th>Win %</th>
+                    <th>Avg R</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {sortedBest.map((r, i) => (
+                    <tr key={i}>
+                      <td className="muted">{r.exchange}</td>
+                      <td style={{fontWeight:800}}>{r.symbol}</td>
+                      <td>{r.n}</td>
+                      <td>{(r.win_rate*100).toFixed(1)}%</td>
+                      <td className={r.avg_r<0?'chgDown':'chgUp'} style={{fontWeight:800}}>{Number(r.avg_r).toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         <div style={{padding:12}}>
           <h3 style={{marginTop:0}}>Worst symbols</h3>
-          <div className="tableWrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Exchange</th>
-                  <th>Symbol</th>
-                  <th>Trades</th>
-                  <th>Win %</th>
-                  <th>Avg R</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedWorst.map((r, i) => (
-                  <tr key={i}>
-                    <td className="muted">{r.exchange}</td>
-                    <td style={{fontWeight:800}}>{r.symbol}</td>
-                    <td>{r.n}</td>
-                    <td>{(r.win_rate*100).toFixed(1)}%</td>
-                    <td className={r.avg_r<0?'chgDown':'chgUp'} style={{fontWeight:800}}>{Number(r.avg_r).toFixed(2)}</td>
+          {status === 'loading' && worst.length === 0 ? (
+            <SkeletonTable rows={5} cols={5} />
+          ) : (
+            <div className="tableWrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Exchange</th>
+                    <th>Symbol</th>
+                    <th>Trades</th>
+                    <th>Win %</th>
+                    <th>Avg R</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {sortedWorst.map((r, i) => (
+                    <tr key={i}>
+                      <td className="muted">{r.exchange}</td>
+                      <td style={{fontWeight:800}}>{r.symbol}</td>
+                      <td>{r.n}</td>
+                      <td>{(r.win_rate*100).toFixed(1)}%</td>
+                      <td className={r.avg_r<0?'chgDown':'chgUp'} style={{fontWeight:800}}>{Number(r.avg_r).toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
       </div>

@@ -57,7 +57,10 @@ a{color:inherit}
 .kpi .value{font-size:20px;font-weight:700}
 .kpi .label{font-size:12px;color:var(--muted)}
 .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));}
-.card{background:linear-gradient(180deg,#101825,#0c131e);border:1px solid var(--border);border-radius:12px;padding:12px}
+.card{background:linear-gradient(180deg,#101825,#0c131e);border:1px solid var(--border);border-radius:12px;padding:12px;transition:transform 0.15s ease, box-shadow 0.15s ease}
+.card:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,0.3)}
+.card-static{transition:none}
+.card-static:hover{transform:none;box-shadow:none}
 
 /* Details modal + mobile bottom sheet */
 .modalOverlay{
@@ -123,6 +126,17 @@ a{color:inherit}
 
 /* Hide scrollbar utility */
 .hide-scrollbar::-webkit-scrollbar{display:none}
+
+/* Toast notifications */
+.toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);padding:12px 20px;border-radius:8px;font-weight:600;font-size:14px;z-index:10000;animation:slideUp 0.3s ease;box-shadow:0 4px 12px rgba(0,0,0,0.3)}
+.toast-error{background:#ef4444;color:#fff}
+.toast-success{background:#10b981;color:#fff}
+.toast-info{background:#3b82f6;color:#fff}
+@keyframes slideUp{from{opacity:0;transform:translateX(-50%) translateY(20px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+
+/* Skeleton loader animation */
+.skeleton-loader{background:linear-gradient(90deg,#1a1a2e 25%,#252540 50%,#1a1a2e 75%);background-size:200% 100%;animation:skeleton 1.5s infinite;border-radius:4px}
+@keyframes skeleton{0%{background-position:200% 0}100%{background-position:-200% 0}}
 .momentumStrong{color:#10b981;font-weight:600}
 .momentumWeak{color:#f43f5e;font-weight:600}
 .signalStrongBull{color:#10b981;font-weight:700;font-size:14px}
@@ -255,6 +269,34 @@ a{color:inherit}
 .mobile-nav a span.icon,
 .mobile-nav button span.icon {
   font-size: 20px;
+  position: relative;
+}
+
+/* Nav badge for counts */
+.nav-badge {
+  position: absolute;
+  top: -6px;
+  right: -10px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+}
+
+.nav-badge-small {
+  width: 8px;
+  height: 8px;
+  min-width: 8px;
+  padding: 0;
+  top: -2px;
+  right: -4px;
 }
 
 @media (max-width: 768px) {
