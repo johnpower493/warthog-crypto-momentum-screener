@@ -59,6 +59,7 @@ class SymbolMetrics(BaseModel):
     change_5m: Optional[float] = None
     change_15m: Optional[float] = None
     change_60m: Optional[float] = None
+    change_1d: Optional[float] = None
     # Volatility/vol
     atr: Optional[float] = None
     vol_zscore_1m: Optional[float] = None
@@ -75,6 +76,7 @@ class SymbolMetrics(BaseModel):
     oi_change_5m: Optional[float] = None  # OI % change over 5m
     oi_change_15m: Optional[float] = None  # OI % change over 15m
     oi_change_1h: Optional[float] = None  # OI % change over 1h
+    oi_change_1d: Optional[float] = None  # OI % change over 1d
     # Momentum indicators
     momentum_5m: Optional[float] = None  # rate of change 5m
     momentum_15m: Optional[float] = None  # rate of change 15m
@@ -127,6 +129,13 @@ class SymbolMetrics(BaseModel):
     
     # Volatility Analysis
     volatility_percentile: Optional[float] = None  # 0-100 percentile vs last 30 periods
+    
+    # Bollinger Bands (20-period, 2 std dev) on 15m
+    bb_upper: Optional[float] = None  # Upper band
+    bb_middle: Optional[float] = None  # Middle band (SMA 20)
+    bb_lower: Optional[float] = None  # Lower band
+    bb_width: Optional[float] = None  # Band width as % of middle
+    bb_position: Optional[float] = None  # Price position within bands (0=lower, 0.5=middle, 1=upper)
     
     # Time Since Signal
     cipher_signal_age_ms: Optional[int] = None  # Time since last cipher signal (ms)

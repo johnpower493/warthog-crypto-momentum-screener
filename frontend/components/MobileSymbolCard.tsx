@@ -17,6 +17,7 @@ interface Metric {
   change_5m?: number | null;
   change_15m?: number | null;
   change_60m?: number | null;
+  change_1d?: number | null;
   signal_score?: number | null;
   signal_strength?: string | null;
   impulse_score?: number | null;
@@ -28,6 +29,9 @@ interface Metric {
   vol_zscore_1m?: number | null;
   rvol_1m?: number | null;
   oi_change_5m?: number | null;
+  oi_change_15m?: number | null;
+  oi_change_1h?: number | null;
+  oi_change_1d?: number | null;
   open_interest?: number | null;
   market_cap?: number | null;
   momentum_score?: number | null;

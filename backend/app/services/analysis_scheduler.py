@@ -3,13 +3,13 @@ import asyncio
 import logging
 
 from ..config import ANALYSIS_AUTORUN_INTERVAL_SEC, ANALYSIS_AUTORUN_WINDOWS, ANALYSIS_AUTORUN_TOP200_ONLY
-from .analysis_backtester import run_analysis_backtest
+from .analysis_backtester import run_analysis_backtest, update_grader_symbol_rates
 
 log = logging.getLogger(__name__)
 
 
 async def analysis_autorun_loop():
-    """Periodically recompute analysis backtest tables."""
+    """Periodically recompute analysis backtest tables and update grader with symbol win rates."""
     # small startup delay to allow streams/backfills
     await asyncio.sleep(10)
     while True:
@@ -17,6 +17,10 @@ async def analysis_autorun_loop():
             for w in ANALYSIS_AUTORUN_WINDOWS:
                 # combined across exchanges
                 run_analysis_backtest(window_days=w, exchange='all', top200_only=ANALYSIS_AUTORUN_TOP200_ONLY)
+            
+            # Update grader with latest symbol win rates (uses 30-day window)
+            update_grader_symbol_rates(window_days=30)
+            
             log.info(f"Analysis autorun complete for windows={ANALYSIS_AUTORUN_WINDOWS}")
         except Exception as e:
             log.warning(f"Analysis autorun failed: {e}")

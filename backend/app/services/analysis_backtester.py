@@ -1,5 +1,6 @@
 from __future__ import annotations
 import time
+import logging
 from typing import Optional, List, Dict, Any, Tuple
 
 from .ohlc_store import init_db, get_conn, _DB_LOCK  # type: ignore
@@ -7,8 +8,105 @@ from .ohlc_store import get_after
 from .backtester import STRATEGY_VERSION
 from .backtester import _simulate_one, BacktestTradeResult  # type: ignore
 
+log = logging.getLogger(__name__)
+
 # Horizon: 1 day of 15m candles
 HORIZON_15M_BARS = 96
+
+
+def compute_symbol_win_rates(window_days: int = 30, min_trades: int = 5) -> Dict[str, float]:
+    """
+    Compute win rate per symbol from backtest_trades table.
+    Returns dict of symbol -> win_rate (0.0 to 1.0).
+    Only includes symbols with at least min_trades resolved trades.
+    """
+    init_db()
+    now = int(time.time() * 1000)
+    since = now - int(window_days * 24 * 60 * 60 * 1000)
+    
+    conn = get_conn()
+    with _DB_LOCK:
+        cur = conn.execute("""
+            SELECT symbol, 
+                   COUNT(*) as total,
+                   SUM(CASE WHEN resolved IN ('WIN', 'TP1', 'TP2', 'TP3') THEN 1 ELSE 0 END) as wins
+            FROM backtest_trades
+            WHERE created_ts >= ? 
+              AND resolved != 'NONE'
+            GROUP BY symbol
+            HAVING COUNT(*) >= ?
+        """, (since, min_trades))
+        rows = cur.fetchall()
+    
+    result = {}
+    for sym, total, wins in rows:
+        result[sym] = wins / total if total > 0 else 0.0
+    
+    return result
+
+
+def get_symbol_performance_stats(window_days: int = 30, min_trades: int = 3) -> List[Dict[str, Any]]:
+    """
+    Get detailed performance stats per symbol for the analysis dashboard.
+    Returns list of dicts with symbol, total_trades, wins, losses, win_rate, avg_r, etc.
+    """
+    init_db()
+    now = int(time.time() * 1000)
+    since = now - int(window_days * 24 * 60 * 60 * 1000)
+    
+    conn = get_conn()
+    with _DB_LOCK:
+        cur = conn.execute("""
+            SELECT symbol, 
+                   exchange,
+                   COUNT(*) as total,
+                   SUM(CASE WHEN resolved IN ('WIN', 'TP1', 'TP2', 'TP3') THEN 1 ELSE 0 END) as wins,
+                   SUM(CASE WHEN resolved = 'LOSS' THEN 1 ELSE 0 END) as losses,
+                   AVG(r_multiple) as avg_r,
+                   SUM(r_multiple) as total_r,
+                   AVG(mae_r) as avg_mae,
+                   AVG(mfe_r) as avg_mfe,
+                   AVG(bars_to_resolve) as avg_bars
+            FROM backtest_trades
+            WHERE created_ts >= ? 
+              AND resolved != 'NONE'
+            GROUP BY symbol, exchange
+            HAVING COUNT(*) >= ?
+            ORDER BY SUM(r_multiple) DESC
+        """, (since, min_trades))
+        rows = cur.fetchall()
+    
+    result = []
+    for row in rows:
+        sym, ex, total, wins, losses, avg_r, total_r, avg_mae, avg_mfe, avg_bars = row
+        win_rate = wins / total if total > 0 else 0.0
+        result.append({
+            'symbol': sym,
+            'exchange': ex,
+            'total_trades': total,
+            'wins': wins,
+            'losses': losses,
+            'win_rate': round(win_rate, 3),
+            'avg_r': round(avg_r, 3) if avg_r else 0,
+            'total_r': round(total_r, 3) if total_r else 0,
+            'avg_mae_r': round(avg_mae, 3) if avg_mae else 0,
+            'avg_mfe_r': round(avg_mfe, 3) if avg_mfe else 0,
+            'avg_bars': round(avg_bars, 1) if avg_bars else 0,
+            'expectancy': round((win_rate * (avg_mfe or 0)) - ((1 - win_rate) * abs(avg_mae or 0)), 3),
+        })
+    
+    return result
+
+
+def update_grader_symbol_rates(window_days: int = 30):
+    """Compute symbol win rates and update the grader cache."""
+    try:
+        from .grader import set_symbol_win_rates
+        rates = compute_symbol_win_rates(window_days=window_days, min_trades=5)
+        set_symbol_win_rates(rates)
+        log.info(f"Updated grader with {len(rates)} symbol win rates")
+    except Exception as e:
+        log.warning(f"Failed to update grader symbol rates: {e}")
 
 
 def run_analysis_backtest(window_days: int, exchange: str = 'all', top200_only: bool = True) -> Dict[str, Any]:

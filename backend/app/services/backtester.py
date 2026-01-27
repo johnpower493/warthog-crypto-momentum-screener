@@ -8,16 +8,25 @@ from ..models import SymbolMetrics
 from ..config import TRADEPLAN_ATR_MULT, TRADEPLAN_TP_R_MULTS
 from .ohlc_store import get_recent, init_db, get_conn, _DB_LOCK  # type: ignore
 
-STRATEGY_VERSION = "v1_structure_atr"
+# Version bump to reflect improved methodology
+STRATEGY_VERSION = "v3_enhanced_grading"
+
+# Minimum grade to include in backtests (None = all, 'A' = only A, 'B' = A and B)
+BACKTEST_MIN_GRADE = 'B'  # Only include A and B grade signals
+
+# R-multiple thresholds for win classification
+# With new TP1 at 1.5R, any TP hit is profitable after fees
+WIN_R_THRESHOLD = 1.0  # Count as "WIN" if R >= 1.0 (TP1 now at 1.5R ensures profit)
 
 
 @dataclass
 class BacktestTradeResult:
-    resolved: str  # 'TP1'|'TP2'|'TP3'|'SL'|'NONE'
+    resolved: str  # 'TP1'|'TP2'|'TP3'|'SL'|'NONE'|'WIN'|'LOSS'
     r: float
     mae_r: float
     mfe_r: float
     bars: int
+    grade: Optional[str] = None  # Signal grade at time of entry
 
 
 def _now_ms() -> int:
@@ -111,6 +120,7 @@ def backtest_symbol(
     symbol: str,
     window_days: int,
     source_tf: Optional[str] = None,
+    min_grade: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Backtest using stored trade plans (generated at signal time).
 
@@ -118,44 +128,112 @@ def backtest_symbol(
 
     Method:
     - Fetch trade_plans(ts, side, entry/stop/tps) from SQLite within window.
+    - Filter by grade if min_grade is set (A = only A, B = A and B, C = all).
     - For each plan, simulate forward on 15m candles after ts, checking stop vs TP hits.
+    - Use realistic win classification: WIN requires R >= 1.5 (profitable after fees).
     - Aggregate win rate and R stats.
     """
     since_ts = int(time.time() * 1000) - int(window_days * 24 * 60 * 60 * 1000)
-    # Pull stored trade plans
+    # Pull stored trade plans with grade info
     from .alert_store import get_trade_plans_since
     plans = get_trade_plans_since(exchange, symbol, since_ts)
     if not plans:
         return {"n_trades": 0}
 
+    # Filter by minimum grade
+    grade_priority = {'A': 3, 'B': 2, 'C': 1, None: 0}
+    effective_min_grade = min_grade if min_grade else BACKTEST_MIN_GRADE
+    if effective_min_grade:
+        min_priority = grade_priority.get(effective_min_grade, 0)
+        plans = [p for p in plans if grade_priority.get(p.get('grade'), 0) >= min_priority]
+    
+    if not plans:
+        return {"n_trades": 0, "filtered_by_grade": effective_min_grade}
+
     from .ohlc_store import get_after
     results: List[BacktestTradeResult] = []
+    grade_results: Dict[str, List[BacktestTradeResult]] = {'A': [], 'B': [], 'C': []}
+    
     for p in plans:
         # Use the next ~3 days of 15m candles as a resolution horizon (288 candles)
         forward = get_after(exchange, symbol, '15m', start_open_time=p['ts'], limit=288)
         if not forward:
             continue
         res = _simulate_one(p['side'], float(p['entry']), float(p['stop']), [p['tp1'], p['tp2'], p['tp3']], forward)
+        res.grade = p.get('grade')
         results.append(res)
+        
+        # Track by grade
+        if res.grade in grade_results:
+            grade_results[res.grade].append(res)
 
     n = len(results)
     if n == 0:
         return {"n_trades": 0}
 
-    wins = sum(1 for r in results if r.resolved.startswith('TP'))
-    win_rate = wins / n
+    # Realistic win classification:
+    # - TP2+ (R >= 2.0) = definite WIN
+    # - TP1 (R = 1.0) = marginal (break-even after fees)
+    # - Use WIN_R_THRESHOLD for classification
+    def is_win(r: BacktestTradeResult) -> bool:
+        return r.r >= WIN_R_THRESHOLD
+    
+    def is_loss(r: BacktestTradeResult) -> bool:
+        return r.resolved == 'SL' or (r.resolved != 'NONE' and r.r < 0)
+
+    wins = sum(1 for r in results if is_win(r))
+    losses = sum(1 for r in results if is_loss(r))
+    resolved = wins + losses
+    win_rate = wins / resolved if resolved > 0 else 0.0
+    
+    # Also track "any TP" rate for comparison
+    any_tp_wins = sum(1 for r in results if r.resolved.startswith('TP'))
+    any_tp_rate = any_tp_wins / n if n > 0 else 0.0
+    
     avg_r = sum(r.r for r in results) / n
     avg_mae = sum(r.mae_r for r in results) / n
     avg_mfe = sum(r.mfe_r for r in results) / n
     avg_bars = sum(r.bars for r in results) / n
+    
+    # Expectancy = (win_rate * avg_win) - (loss_rate * avg_loss)
+    winning_rs = [r.r for r in results if is_win(r)]
+    losing_rs = [abs(r.r) for r in results if is_loss(r)]
+    avg_win_r = sum(winning_rs) / len(winning_rs) if winning_rs else 0
+    avg_loss_r = sum(losing_rs) / len(losing_rs) if losing_rs else 1
+    expectancy = (win_rate * avg_win_r) - ((1 - win_rate) * avg_loss_r) if resolved > 0 else 0
+    
+    # Per-grade stats
+    grade_stats = {}
+    for g in ['A', 'B', 'C']:
+        g_results = grade_results[g]
+        if g_results:
+            g_wins = sum(1 for r in g_results if is_win(r))
+            g_losses = sum(1 for r in g_results if is_loss(r))
+            g_resolved = g_wins + g_losses
+            grade_stats[g] = {
+                'n': len(g_results),
+                'wins': g_wins,
+                'losses': g_losses,
+                'win_rate': g_wins / g_resolved if g_resolved > 0 else 0,
+                'avg_r': sum(r.r for r in g_results) / len(g_results),
+            }
 
     return {
         "n_trades": n,
-        "win_rate": win_rate,
+        "n_resolved": resolved,
+        "wins": wins,
+        "losses": losses,
+        "win_rate": win_rate,  # Realistic (R >= 1.5)
+        "any_tp_rate": any_tp_rate,  # Any TP hit rate (for comparison)
         "avg_r": avg_r,
+        "expectancy": expectancy,
+        "avg_win_r": avg_win_r,
+        "avg_loss_r": avg_loss_r,
         "avg_mae_r": avg_mae,
         "avg_mfe_r": avg_mfe,
         "avg_bars_to_resolve": avg_bars,
+        "filtered_by_grade": effective_min_grade,
+        "grade_stats": grade_stats,
         "counts": {
             "TP1": sum(1 for r in results if r.resolved == 'TP1'),
             "TP2": sum(1 for r in results if r.resolved == 'TP2'),

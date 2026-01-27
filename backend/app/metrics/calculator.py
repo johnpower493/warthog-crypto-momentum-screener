@@ -1,6 +1,6 @@
 from __future__ import annotations
 from collections import deque
-from typing import Deque, Dict, Optional, Callable, Any
+from typing import Deque, Dict, Optional, Callable, Any, Tuple
 import math
 import time
 
@@ -21,8 +21,15 @@ class SymbolState:
     def __init__(self, symbol: str, exchange: str):
         self.symbol = symbol
         self.exchange = exchange
-        # maxlen needs to accommodate %R slow period (112) + smoothing (3) + buffer = 120
-        maxlen = max(120, 61, WINDOW_MEDIUM+1, ATR_PERIOD+1, VOL_LOOKBACK+1)
+        # maxlen needs to accommodate the largest 1m lookback we compute.
+        # We compute 1D (1440m) changes for price and OI, so keep >= 1441 samples (+buffer).
+        maxlen = max(
+            1440 + 2,  # 1d lookback + current + safety
+            120, 61,
+            WINDOW_MEDIUM + 1,
+            ATR_PERIOD + 1,
+            VOL_LOOKBACK + 1,
+        )
         self.close_1m = RollingSeries(maxlen=maxlen)
         self.high_1m = RollingSeries(maxlen=maxlen)
         self.low_1m = RollingSeries(maxlen=maxlen)
@@ -190,6 +197,7 @@ class SymbolState:
         ch_5 = pct_change_with_current(self.close_1m.values, WINDOW_SHORT, current_price)
         ch_15 = pct_change_with_current(self.close_1m.values, WINDOW_MEDIUM, current_price)
         ch_60 = pct_change_with_current(self.close_1m.values, 60, current_price)
+        ch_1d = pct_change_with_current(self.close_1m.values, 1440, current_price)
         vol_z = zscore_abs_ret(self.close_1m.values, VOL_LOOKBACK)
         v1 = sum_tail(self.vol_1m.values, 1)
         v5 = sum_tail(self.vol_1m.values, 5)
@@ -203,6 +211,7 @@ class SymbolState:
         oi_5m = pct_change(self.oi_1m.values, WINDOW_SHORT)
         oi_15m = pct_change(self.oi_1m.values, WINDOW_MEDIUM)
         oi_60m = pct_change(self.oi_1m.values, 60)
+        oi_1d = pct_change(self.oi_1m.values, 1440)
         
         # Momentum indicators (use current price for real-time momentum)
         mom_5m = momentum_with_current(self.close_1m.values, WINDOW_SHORT, current_price)
@@ -441,6 +450,11 @@ class SymbolState:
                 multiplier=150,
             )
         
+        # Bollinger Bands (20-period on 15m timeframe)
+        bb_upper_val, bb_middle_val, bb_lower_val, bb_width_val, bb_position_val = bollinger_bands(
+            list(self._htf['15m']['close'].values), period=20, num_std=2.0
+        )
+        
         # Multi-Timeframe Confluence
         wt_1m_tuple = (wt1_1m, wt2_1m, wt1_prev_1m, wt2_prev_1m)
         mtf_bull, mtf_bear, mtf_summary_str = mtf_confluence(
@@ -488,6 +502,7 @@ class SymbolState:
             change_5m=ch_5,
             change_15m=ch_15,
             change_60m=ch_60,
+            change_1d=ch_1d,
             atr=self.atr,
             vol_zscore_1m=vol_z,
             vol_1m=v1,
@@ -501,6 +516,7 @@ class SymbolState:
             oi_change_5m=oi_5m,
             oi_change_15m=oi_15m,
             oi_change_1h=oi_60m,
+            oi_change_1d=oi_1d,
             momentum_5m=mom_5m,
             momentum_15m=mom_15m,
             momentum_score=mom_score,
@@ -543,6 +559,11 @@ class SymbolState:
             mtf_bear_count=mtf_bear,
             mtf_summary=mtf_summary_str,
             volatility_percentile=vol_pct,
+            bb_upper=bb_upper_val,
+            bb_middle=bb_middle_val,
+            bb_lower=bb_lower_val,
+            bb_width=bb_width_val,
+            bb_position=bb_position_val,
             cipher_signal_age_ms=cipher_age,
             percent_r_signal_age_ms=percent_r_age,
             sector_tags=tags if tags else None,
@@ -920,6 +941,48 @@ def vwap(closes, volumes, n: int) -> Optional[float]:
         return sum(ci*vi for ci,vi in zip(c,v)) / totv
     except Exception:
         return None
+
+
+def bollinger_bands(closes, period: int = 20, num_std: float = 2.0) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float], Optional[float]]:
+    """
+    Calculate Bollinger Bands.
+    Returns: (upper, middle, lower, width, position)
+    - upper: Upper band (SMA + num_std * std)
+    - middle: Middle band (SMA)
+    - lower: Lower band (SMA - num_std * std)
+    - width: Band width as percentage of middle ((upper - lower) / middle)
+    - position: Current price position (0 = at lower, 0.5 = at middle, 1 = at upper)
+    """
+    if len(closes) < period + 1:
+        return None, None, None, None, None
+    try:
+        c = list(closes)
+        # Use last `period` closed candles (exclude most recent partial bar)
+        window = c[-period-1:-1]
+        current_price = c[-1]
+        
+        mean = sum(window) / len(window)
+        variance = sum((x - mean) ** 2 for x in window) / len(window)
+        std = math.sqrt(variance)
+        
+        upper = mean + num_std * std
+        lower = mean - num_std * std
+        middle = mean
+        
+        # Width as percentage of middle
+        width = (upper - lower) / middle if middle != 0 else 0
+        
+        # Position: where is current price within the bands (0 to 1)
+        band_range = upper - lower
+        if band_range > 0:
+            position = (current_price - lower) / band_range
+            position = max(0, min(1, position))  # Clamp to 0-1
+        else:
+            position = 0.5
+        
+        return upper, middle, lower, width, position
+    except Exception:
+        return None, None, None, None, None
 
 def zscore_abs_ret(closes, lookback: int) -> Optional[float]:
     if len(closes) <= lookback:

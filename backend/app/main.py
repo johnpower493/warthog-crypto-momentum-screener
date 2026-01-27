@@ -234,6 +234,7 @@ async def debug_oi():
                     "oi_5m": m.oi_change_5m,
                     "oi_15m": m.oi_change_15m,
                     "oi_1h": m.oi_change_1h,
+                    "oi_1d": getattr(m, 'oi_change_1d', None),
                 })
         return {
             "exchange": "binance",
@@ -1073,8 +1074,178 @@ async def meta_sentiment_all(window_minutes: int = 240):
 
 @app.post('/meta/analysis/run')
 async def meta_analysis_run(window_days: int = 30, exchange: str = 'all', top200_only: bool = True):
-    from .services.analysis_backtester import run_analysis_backtest
-    return run_analysis_backtest(window_days=window_days, exchange=exchange, top200_only=top200_only)
+    """Run analysis backtest and update grader with symbol win rates.
+    
+    This can be triggered manually from the Analysis page to recompute all backtests
+    and update the signal grading model with latest symbol performance data.
+    """
+    from .services.analysis_backtester import run_analysis_backtest, update_grader_symbol_rates
+    import time
+    
+    start = time.time()
+    result = run_analysis_backtest(window_days=window_days, exchange=exchange, top200_only=top200_only)
+    
+    # Also update grader with symbol win rates
+    update_grader_symbol_rates(window_days=30)
+    
+    elapsed = time.time() - start
+    result['elapsed_sec'] = round(elapsed, 2)
+    result['grader_updated'] = True
+    
+    return result
+
+
+@app.get('/meta/analysis/filtered_winrate')
+async def meta_analysis_filtered_winrate(
+    window_days: int = 30,
+    exchange: str = 'all',
+    top200_only: bool = True,
+    grade: str | None = None,  # 'A', 'B', 'C', or None for all
+    source_tf: str | None = None,  # '15m', '1h', '4h', or None for all
+    signal: str | None = None,  # 'BUY', 'SELL', or None for all
+    symbol: str | None = None,  # Specific symbol or None for all
+):
+    """Get filtered win rate stats for specific grade/timeframe/side/symbol combinations.
+    
+    This allows users to see win rates for specific signal configurations,
+    e.g., "A-grade BUY signals on 15m timeframe for BTCUSDT".
+    """
+    from .services.ohlc_store import init_db
+    from .services.ohlc_store import _DB_LOCK, _CONN  # type: ignore
+    from .services.backtester import STRATEGY_VERSION
+    init_db()
+
+    params = [window_days, STRATEGY_VERSION]
+    where = ["window_days=?", "strategy_version=?", "resolved != 'NONE'"]
+    
+    if exchange != 'all':
+        where.append('exchange=?')
+        params.append(exchange)
+    if top200_only:
+        where.append('liquidity_top200 = 1')
+    if grade:
+        where.append('setup_grade=?')
+        params.append(grade)
+    if source_tf:
+        where.append('source_tf=?')
+        params.append(source_tf)
+    if signal:
+        where.append('signal=?')
+        params.append(signal)
+    if symbol:
+        where.append('symbol=?')
+        params.append(symbol)
+
+    where_sql = ' AND '.join(where)
+    
+    with _DB_LOCK:
+        row = _CONN.execute(
+            f"""
+            SELECT
+              COUNT(*) as n,
+              SUM(CASE WHEN resolved LIKE 'TP%' THEN 1 ELSE 0 END) as wins,
+              SUM(CASE WHEN resolved = 'SL' THEN 1 ELSE 0 END) as losses,
+              AVG(CASE WHEN resolved LIKE 'TP%' THEN 1.0 ELSE 0.0 END) as win_rate,
+              AVG(r_multiple) as avg_r,
+              SUM(r_multiple) as total_r,
+              AVG(mae_r) as avg_mae_r,
+              AVG(mfe_r) as avg_mfe_r,
+              AVG(bars_to_resolve) as avg_bars,
+              SUM(CASE WHEN resolved = 'TP1' THEN 1 ELSE 0 END) as tp1_count,
+              SUM(CASE WHEN resolved = 'TP2' THEN 1 ELSE 0 END) as tp2_count,
+              SUM(CASE WHEN resolved = 'TP3' THEN 1 ELSE 0 END) as tp3_count
+            FROM backtest_trades
+            WHERE {where_sql}
+            """,
+            tuple(params),
+        ).fetchone()
+        
+        # Also get breakdown by grade if no grade filter
+        grade_breakdown = []
+        if not grade:
+            grades_rows = _CONN.execute(
+                f"""
+                SELECT setup_grade,
+                       COUNT(*) as n,
+                       AVG(CASE WHEN resolved LIKE 'TP%' THEN 1.0 ELSE 0.0 END) as win_rate,
+                       AVG(r_multiple) as avg_r
+                FROM backtest_trades
+                WHERE {where_sql}
+                GROUP BY setup_grade
+                ORDER BY setup_grade
+                """,
+                tuple(params),
+            ).fetchall()
+            for gr in grades_rows:
+                grade_breakdown.append({
+                    'grade': gr[0] or '—',
+                    'n': int(gr[1] or 0),
+                    'win_rate': round(float(gr[2] or 0), 3),
+                    'avg_r': round(float(gr[3] or 0), 3),
+                })
+
+    n = int(row[0] or 0)
+    wins = int(row[1] or 0)
+    losses = int(row[2] or 0)
+    win_rate = float(row[3] or 0)
+    avg_r = float(row[4] or 0)
+    
+    # Calculate expectancy
+    if n > 0:
+        avg_win = float(row[7] or 0)  # avg_mfe_r as proxy for avg win
+        avg_loss = abs(float(row[6] or 0))  # avg_mae_r as proxy for avg loss
+        expectancy = (win_rate * avg_win) - ((1 - win_rate) * avg_loss) if avg_loss > 0 else 0
+    else:
+        expectancy = 0
+
+    # Get list of symbols with trades for the dropdown
+    symbol_list = []
+    with _DB_LOCK:
+        sym_rows = _CONN.execute(
+            f"""
+            SELECT DISTINCT symbol, exchange, COUNT(*) as n
+            FROM backtest_trades
+            WHERE window_days=? AND strategy_version=? AND resolved != 'NONE'
+            {' AND exchange=?' if exchange != 'all' else ''}
+            {' AND liquidity_top200 = 1' if top200_only else ''}
+            GROUP BY symbol, exchange
+            HAVING COUNT(*) >= 3
+            ORDER BY COUNT(*) DESC
+            LIMIT 100
+            """,
+            tuple([window_days, STRATEGY_VERSION] + ([exchange] if exchange != 'all' else [])),
+        ).fetchall()
+        for sr in sym_rows:
+            symbol_list.append({'symbol': sr[0], 'exchange': sr[1], 'n': sr[2]})
+
+    return {
+        'filters': {
+            'window_days': window_days,
+            'exchange': exchange,
+            'top200_only': top200_only,
+            'grade': grade or 'all',
+            'source_tf': source_tf or 'all',
+            'signal': signal or 'all',
+            'symbol': symbol or 'all',
+        },
+        'available_symbols': symbol_list,
+        'stats': {
+            'n_trades': n,
+            'wins': wins,
+            'losses': losses,
+            'win_rate': round(win_rate, 3),
+            'avg_r': round(avg_r, 3),
+            'total_r': round(float(row[5] or 0), 2),
+            'expectancy': round(expectancy, 3),
+            'avg_mae_r': round(float(row[6] or 0), 3),
+            'avg_mfe_r': round(float(row[7] or 0), 3),
+            'avg_bars': round(float(row[8] or 0), 1),
+            'tp1_count': int(row[9] or 0),
+            'tp2_count': int(row[10] or 0),
+            'tp3_count': int(row[11] or 0),
+        },
+        'grade_breakdown': grade_breakdown,
+    }
 
 
 @app.get('/meta/analysis/summary')
@@ -1178,6 +1349,31 @@ async def meta_analysis_breakdown(
         'min_trades': max(1, int(min_trades)),
         'limit': max(1, int(limit)),
         'rows': out,
+    }
+
+
+@app.get('/meta/analysis/symbols')
+async def meta_analysis_symbols(window_days: int = 30, min_trades: int = 3):
+    """Get per-symbol performance stats for the analysis dashboard.
+    
+    Returns symbols ranked by total R, with win rate, avg R, expectancy, etc.
+    Used to identify best/worst performing symbols and feed the grader's auto-filtering.
+    """
+    from .services.analysis_backtester import get_symbol_performance_stats
+    
+    stats = get_symbol_performance_stats(window_days=window_days, min_trades=min_trades)
+    
+    # Split into best and worst
+    best = [s for s in stats if s['total_r'] > 0][:20]
+    worst = [s for s in stats if s['total_r'] <= 0][-20:][::-1]  # Reverse to show worst first
+    
+    return {
+        'window_days': window_days,
+        'min_trades': min_trades,
+        'total_symbols': len(stats),
+        'best_performers': best,
+        'worst_performers': worst,
+        'all_symbols': stats,
     }
 
 

@@ -42,12 +42,14 @@ LIQ_WEIGHTS = (
 )
 
 # Trade plan generation
-TRADEPLAN_ATR_MULT = float(os.getenv("TRADEPLAN_ATR_MULT", "2.0"))
+# ATR multiplier for stop loss - wider stop = fewer premature stop-outs but larger risk per trade
+TRADEPLAN_ATR_MULT = float(os.getenv("TRADEPLAN_ATR_MULT", "2.5"))  # Increased from 2.0 to reduce premature stops
 TRADEPLAN_SWING_LOOKBACK_15M = int(os.getenv("TRADEPLAN_SWING_LOOKBACK_15M", "24"))  # last 24 x 15m candles (~6h)
+# TP R-multiples: TP1 at 1.5R ensures profit after fees, TP2 at 2.5R, TP3 at 4R for runners
 TRADEPLAN_TP_R_MULTS = (
-    float(os.getenv("TRADEPLAN_TP1_R", "1.0")),
-    float(os.getenv("TRADEPLAN_TP2_R", "2.0")),
-    float(os.getenv("TRADEPLAN_TP3_R", "3.0")),
+    float(os.getenv("TRADEPLAN_TP1_R", "1.5")),  # Increased from 1.0 - ensures profit after fees
+    float(os.getenv("TRADEPLAN_TP2_R", "2.5")),  # Increased from 2.0
+    float(os.getenv("TRADEPLAN_TP3_R", "4.0")),  # Increased from 3.0 - let winners run
 )
 TRADEPLAN_ENABLE = os.getenv("TRADEPLAN_ENABLE", "true").lower() in {"1","true","yes"}
 

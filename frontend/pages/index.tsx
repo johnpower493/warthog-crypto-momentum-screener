@@ -12,6 +12,7 @@ type Metric = {
   change_5m?: number | null;
   change_15m?: number | null;
   change_60m?: number | null;
+  change_1d?: number | null;
   market_cap?: number | null;
   atr?: number | null;
   vol_zscore_1m?: number | null;
@@ -27,6 +28,7 @@ type Metric = {
   oi_change_5m?: number | null;
   oi_change_15m?: number | null;
   oi_change_1h?: number | null;
+  oi_change_1d?: number | null;
   // Momentum
   momentum_5m?: number | null;
   momentum_15m?: number | null;
@@ -141,6 +143,7 @@ type SortKey =
   | 'change_5m'
   | 'change_15m'
   | 'change_60m'
+  | 'change_1d'
   | 'market_cap'
   | 'atr'
   | 'vol_zscore_1m'
@@ -148,6 +151,9 @@ type SortKey =
   | 'symbol'
   | 'momentum_score'
   | 'oi_change_5m'
+  | 'oi_change_15m'
+  | 'oi_change_1h'
+  | 'oi_change_1d'
   | 'open_interest'
   | 'signal_score'
   | 'impulse_score'
@@ -294,6 +300,7 @@ export default function Home() {
     { key: 'chg5m', label: '5m %', group: 'Returns', mobileDefault: true },
     { key: 'chg15m', label: '15m %', group: 'Returns', mobileDefault: true },
     { key: 'chg60m', label: '60m %', group: 'Returns', mobileDefault: false },
+    { key: 'chg1d', label: '1d %', group: 'Returns', mobileDefault: false },
 
     { key: 'momentum', label: 'Momentum', group: 'Momentum', mobileDefault: false },
     { key: 'mom5m', label: 'Mom 5m', group: 'Momentum', mobileDefault: false },
@@ -303,6 +310,7 @@ export default function Home() {
     { key: 'oi5m', label: 'OI Δ 5m', group: 'Open Interest', mobileDefault: false },
     { key: 'oi15m', label: 'OI Δ 15m', group: 'Open Interest', mobileDefault: false },
     { key: 'oi1h', label: 'OI Δ 1h', group: 'Open Interest', mobileDefault: false },
+    { key: 'oi1d', label: 'OI Δ 1d', group: 'Open Interest', mobileDefault: false },
 
     { key: 'atr', label: 'ATR', group: 'Volatility', mobileDefault: false },
     { key: 'volz', label: 'Vol Z', group: 'Volatility', mobileDefault: false },
@@ -324,8 +332,10 @@ export default function Home() {
     impulse: true,
     chg1m: true,
     chg60m: true,
+    chg1d: false,
     oi: true,
     oi5m: true,
+    oi1d: false,
     atr: true,
     volz: true,
     rvol1m: true,
@@ -1083,6 +1093,10 @@ export default function Home() {
               <option value="change_15m">Sort: 15m %</option>
               <option value="momentum_score">Sort: Momentum</option>
               <option value="oi_change_5m">Sort: OI Chg 5m</option>
+              <option value="oi_change_15m">Sort: OI Chg 15m</option>
+              <option value="oi_change_1h">Sort: OI Chg 1h</option>
+              <option value="oi_change_1d">Sort: OI Chg 1d</option>
+              <option value="change_1d">Sort: % 1d</option>
               <option value="open_interest">Sort: OI</option>
               <option value="atr">Sort: ATR</option>
               <option value="vol_zscore_1m">Sort: Vol Z</option>
@@ -1393,6 +1407,11 @@ export default function Home() {
                       60m % {sortKey==='change_60m' && (sortDir==='desc'?'↓':'↑')}
                     </th>
                   )}
+                  {col('chg1d') && (
+                    <th className="sortable hide-md" onClick={()=>handleHeaderClick('change_1d')}>
+                      1d % {sortKey==='change_1d' && (sortDir==='desc'?'↓':'↑')}
+                    </th>
+                  )}
                   {col('momentum') && (
                     <th className="sortable hide-md" onClick={()=>handleHeaderClick('momentum_score')}>
                       Momentum {sortKey==='momentum_score' && (sortDir==='desc'?'↓':'↑')}
@@ -1410,8 +1429,21 @@ export default function Home() {
                       OI Δ 5m {sortKey==='oi_change_5m' && (sortDir==='desc'?'↓':'↑')}
                     </th>
                   )}
-                  {col('oi15m') && <th className="hide-md">OI Δ 15m</th>}
-                  {col('oi1h') && <th className="hide-md">OI Δ 1h</th>}
+                  {col('oi15m') && (
+                    <th className="sortable hide-md" onClick={()=>handleHeaderClick('oi_change_15m')}>
+                      OI Δ 15m {sortKey==='oi_change_15m' && (sortDir==='desc'?'↓':'↑')}
+                    </th>
+                  )}
+                  {col('oi1h') && (
+                    <th className="sortable hide-md" onClick={()=>handleHeaderClick('oi_change_1h')}>
+                      OI Δ 1h {sortKey==='oi_change_1h' && (sortDir==='desc'?'↓':'↑')}
+                    </th>
+                  )}
+                  {col('oi1d') && (
+                    <th className="sortable hide-md" onClick={()=>handleHeaderClick('oi_change_1d')}>
+                      OI Δ 1d {sortKey==='oi_change_1d' && (sortDir==='desc'?'↓':'↑')}
+                    </th>
+                  )}
                   {col('atr') && (
                     <th className="sortable hide-md" onClick={()=>handleHeaderClick('atr')}>
                       ATR {sortKey==='atr' && (sortDir==='desc'?'↓':'↑')}
@@ -1474,6 +1506,7 @@ export default function Home() {
                     {col('chg5m') && <td className={pctClass(r.change_5m)}>{fmtPct(r.change_5m)}</td>}
                     {col('chg15m') && <td className={pctClass(r.change_15m)}>{fmtPct(r.change_15m)}</td>}
                     {col('chg60m') && <td className={pctClass(r.change_60m) + ' hide-md'}>{fmtPct(r.change_60m)}</td>}
+                    {col('chg1d') && <td className={pctClass(r.change_1d) + ' hide-md'}>{fmtPct(r.change_1d)}</td>}
                     {col('momentum') && <td className={momentumClass(r.momentum_score) + ' hide-md'}>{fmtMomentum(r.momentum_score)}</td>}
                     {col('mom5m') && <td className={pctClass(r.momentum_5m) + ' hide-md'}>{fmtPct(r.momentum_5m)}</td>}
                     {col('mom15m') && <td className={pctClass(r.momentum_15m) + ' hide-md'}>{fmtPct(r.momentum_15m)}</td>}
@@ -1481,6 +1514,7 @@ export default function Home() {
                     {col('oi5m') && <td className={oiClass(r.oi_change_5m) + ' hide-sm'}>{fmtOIPct(r.oi_change_5m)}</td>}
                     {col('oi15m') && <td className={oiClass(r.oi_change_15m) + ' hide-md'}>{fmtOIPct(r.oi_change_15m)}</td>}
                     {col('oi1h') && <td className={oiClass(r.oi_change_1h) + ' hide-md'}>{fmtOIPct(r.oi_change_1h)}</td>}
+                    {col('oi1d') && <td className={oiClass(r.oi_change_1d) + ' hide-md'}>{fmtOIPct(r.oi_change_1d)}</td>}
                     {col('atr') && <td className={'hide-md'}>{fmt(r.atr)}</td>}
                     {col('volz') && <td className={'hide-md'}>{fmt(r.vol_zscore_1m)}</td>}
                     {col('vol1m') && <td className={'hide-md'}>{fmt(r.vol_1m)}</td>}
@@ -2444,6 +2478,10 @@ function DetailsModal({
                         <span>60m</span>
                         <span className={pctClass(row.change_60m)} style={{ fontWeight: 600 }}>{fmtPct(row.change_60m)}</span>
                       </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                        <span>1d</span>
+                        <span className={pctClass(row.change_1d)} style={{ fontWeight: 600 }}>{fmtPct(row.change_1d)}</span>
+                      </div>
                     </div>
                   </div>
 
@@ -2478,6 +2516,8 @@ function DetailsModal({
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 12 }}>
                       <div className={oiClass(row.oi_change_5m)}>5m: {fmtOIPct(row.oi_change_5m)}</div>
                       <div className={oiClass(row.oi_change_15m)}>15m: {fmtOIPct(row.oi_change_15m)}</div>
+                      <div className={oiClass(row.oi_change_1h)}>1h: {fmtOIPct(row.oi_change_1h)}</div>
+                      <div className={oiClass(row.oi_change_1d)}>1d: {fmtOIPct(row.oi_change_1d)}</div>
                     </div>
                   </div>
                 </div>

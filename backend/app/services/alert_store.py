@@ -221,14 +221,17 @@ def get_latest_trade_plan(exchange: str, symbol: str) -> Optional[Dict[str, Any]
 
 
 def get_trade_plans_since(exchange: str, symbol: str, since_ts: int) -> List[Dict[str, Any]]:
+    """Get trade plans with grade info by joining with alerts table."""
     conn = get_conn()
     with _DB_LOCK:
         cur = conn.execute(
             """
-            SELECT ts, side, entry_price, stop_loss, tp1, tp2, tp3
-            FROM trade_plans
-            WHERE exchange=? AND symbol=? AND ts >= ?
-            ORDER BY ts ASC
+            SELECT tp.ts, tp.side, tp.entry_price, tp.stop_loss, tp.tp1, tp.tp2, tp.tp3,
+                   a.setup_grade, a.setup_score
+            FROM trade_plans tp
+            LEFT JOIN alerts a ON tp.alert_id = a.id
+            WHERE tp.exchange=? AND tp.symbol=? AND tp.ts >= ?
+            ORDER BY tp.ts ASC
             """,
             (exchange, symbol, since_ts),
         )
@@ -243,5 +246,7 @@ def get_trade_plans_since(exchange: str, symbol: str, since_ts: int) -> List[Dic
             "tp1": float(r[4]) if r[4] is not None else None,
             "tp2": float(r[5]) if r[5] is not None else None,
             "tp3": float(r[6]) if r[6] is not None else None,
+            "grade": r[7],  # setup_grade from alerts
+            "score": float(r[8]) if r[8] is not None else None,
         })
     return out
