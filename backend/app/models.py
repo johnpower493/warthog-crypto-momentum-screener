@@ -128,14 +128,31 @@ class SymbolMetrics(BaseModel):
     mtf_summary: Optional[str] = None  # "4/5 Bullish", "3/5 Bearish", etc.
     
     # Volatility Analysis
-    volatility_percentile: Optional[float] = None  # 0-100 percentile vs last 30 periods
-    
-    # Bollinger Bands (20-period, 2 std dev) on 15m
+    volatility_percentile: Optional[float] = None  # 0-100 percentile vs last 30 1m-ATR periods
+
+    # Volatility Due / Squeeze (multi-timeframe)
+    # "Volatility due" ~= a fresh transition into volatility compression.
+    vol_due_15m: Optional[bool] = None
+    vol_due_4h: Optional[bool] = None
+    vol_due_source_tf: Optional[str] = None  # '15m' | '4h'
+    vol_due_reason: Optional[str] = None
+    vol_due_age_ms: Optional[int] = None
+
+    # Squeeze (state): True while the symbol remains in compression on that timeframe.
+    vol_squeeze_15m: Optional[bool] = None
+    vol_squeeze_4h: Optional[bool] = None
+
+    # Bollinger Bands (20-period, 2 std dev)
+    # 15m
     bb_upper: Optional[float] = None  # Upper band
     bb_middle: Optional[float] = None  # Middle band (SMA 20)
     bb_lower: Optional[float] = None  # Lower band
     bb_width: Optional[float] = None  # Band width as % of middle
     bb_position: Optional[float] = None  # Price position within bands (0=lower, 0.5=middle, 1=upper)
+
+    # 4h
+    bb_width_4h: Optional[float] = None
+    bb_position_4h: Optional[float] = None
     
     # Time Since Signal
     cipher_signal_age_ms: Optional[int] = None  # Time since last cipher signal (ms)

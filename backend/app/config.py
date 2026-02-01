@@ -83,6 +83,23 @@ ALERT_COOLDOWN_SMALL_MS = int(os.getenv("ALERT_COOLDOWN_SMALL_MS", "300000"))  #
 ALERT_INCLUDE_EXPLANATION = os.getenv("ALERT_INCLUDE_EXPLANATION", "true").lower() in {"1","true","yes"}
 ALERT_MIN_GRADE = os.getenv("ALERT_MIN_GRADE", "A").upper()  # 'A' default for outbound notifications
 
+# Volatility Due (Squeeze) alerts
+# Enable/disable independently of other alerts (still respects ENABLE_ALERTS)
+ALERT_VOL_DUE = os.getenv("ALERT_VOL_DUE", "true").lower() in {"1","true","yes"}
+
+# Compression thresholds
+# BB width is (upper-lower)/middle. 0.03 is a tight squeeze.
+VOL_DUE_BB_WIDTH_15M = float(os.getenv("VOL_DUE_BB_WIDTH_15M", "0.03"))
+VOL_DUE_BB_WIDTH_4H = float(os.getenv("VOL_DUE_BB_WIDTH_4H", "0.08"))
+
+# ATR percentile threshold within each timeframe's own recent history
+VOL_DUE_ATR_PCTILE_15M = float(os.getenv("VOL_DUE_ATR_PCTILE_15M", "20"))
+VOL_DUE_ATR_PCTILE_4H = float(os.getenv("VOL_DUE_ATR_PCTILE_4H", "25"))
+
+# Lookback for percentile calculation (in candles of that timeframe)
+VOL_DUE_LOOKBACK_15M = int(os.getenv("VOL_DUE_LOOKBACK_15M", "80"))   # ~20h
+VOL_DUE_LOOKBACK_4H = int(os.getenv("VOL_DUE_LOOKBACK_4H", "60"))     # ~10d
+
 # Market cap cache configuration
 MARKET_CAP_UPDATE_INTERVAL_SEC = int(os.getenv("MARKET_CAP_UPDATE_INTERVAL_SEC", "3600"))  # 1 hour default
 

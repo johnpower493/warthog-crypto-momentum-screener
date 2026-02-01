@@ -76,6 +76,20 @@ type Metric = {
   
   // Volatility Analysis
   volatility_percentile?: number | null;
+
+  // Volatility Due / Squeeze (multi-timeframe)
+  vol_due_15m?: boolean | null;
+  vol_due_4h?: boolean | null;
+  vol_due_source_tf?: string | null;
+  vol_due_reason?: string | null;
+  vol_due_age_ms?: number | null;
+
+  // Squeeze (state): true while in compression
+  vol_squeeze_15m?: boolean | null;
+  vol_squeeze_4h?: boolean | null;
+
+  bb_width_4h?: number | null;
+  bb_position_4h?: number | null;
   
   // Time Since Signal
   cipher_signal_age_ms?: number | null;
@@ -270,6 +284,8 @@ export default function Home() {
     }
   };
   const [onlyFavs, setOnlyFavs] = useState(false);
+  const [volDueOnly, setVolDueOnly] = useState(false);
+  const [squeezeOnly, setSqueezeOnly] = useState(false);
   const [favs, setFavs] = useState<string[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const [status, setStatus] = useState<'disconnected'|'connecting'|'connected'>('connecting');
@@ -686,8 +702,14 @@ export default function Home() {
     if (preset === 'rBuy') base = base.filter((r) => r.percent_r_os_reversal);
     if (preset === 'rSell') base = base.filter((r) => r.percent_r_ob_reversal);
 
+    // Volatility Due (event) filter: only symbols that JUST triggered vol-due
+    if (volDueOnly) base = base.filter((r) => r.vol_due_15m === true || r.vol_due_4h === true);
+
+    // Squeeze (state) filter: symbols currently in compression
+    if (squeezeOnly) base = base.filter((r) => r.vol_squeeze_15m === true || r.vol_squeeze_4h === true);
+
     return base;
-  }, [rows, query, onlyFavs, favs, preset]);
+  }, [rows, query, onlyFavs, volDueOnly, squeezeOnly, favs, preset]);
 
   const sorted = useMemo(() => {
     const cmpString = (a: string, b: string) =>
@@ -1119,6 +1141,12 @@ export default function Home() {
             </button>
             <button className="button" onClick={()=>setOnlyFavs(v=>!v)}>
               {onlyFavs ? 'All' : 'Only Favs'}
+            </button>
+            <button className={"button " + (volDueOnly ? 'buttonActive' : '')} onClick={()=>setVolDueOnly(v=>!v)} title="Show only symbols that just triggered Volatility Due (15m or 4h)">
+              Vol Due
+            </button>
+            <button className={"button " + (squeezeOnly ? 'buttonActive' : '')} onClick={()=>setSqueezeOnly(v=>!v)} title="Show only symbols currently in a squeeze (15m or 4h)">
+              Squeeze
             </button>
             <button className={"button "+(showAlerts? 'buttonActive':'')} onClick={()=>setShowAlerts(v=>!v)} title="Toggle Alert Log">
               Alerts
@@ -3710,6 +3738,37 @@ function DetailsModal({
                       ) : (
                         <div className="muted">Need data...</div>
                       )}
+                    </div>
+
+                    {/* Volatility Due (Squeeze) */}
+                    <div style={{ background: 'rgba(0,0,0,0.2)', padding: 12, borderRadius: 6 }}>
+                      <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>
+                        Volatility Due <span style={{ color: '#555' }}>(Squeeze)</span>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                          <span>15m</span>
+                          <span style={{ fontWeight: 700, color: row.vol_due_15m ? '#10b981' : '#666' }}>
+                            {row.vol_due_15m ? 'ON' : '—'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                          <span>4h</span>
+                          <span style={{ fontWeight: 700, color: row.vol_due_4h ? '#10b981' : '#666' }}>
+                            {row.vol_due_4h ? 'ON' : '—'}
+                          </span>
+                        </div>
+
+                        {(row.vol_due_15m || row.vol_due_4h) && (
+                          <div style={{ fontSize: 10, color: '#888', marginTop: 2, lineHeight: 1.35 }}>
+                            {row.vol_due_source_tf ? `Triggered: ${row.vol_due_source_tf}` : null}
+                            {row.vol_due_reason ? (
+                              <div style={{ marginTop: 4, fontStyle: 'italic' }}>{row.vol_due_reason}</div>
+                            ) : null}
+                          </div>
+                        )}
+                      </div>
                     </div>
                     
                     {/* Time Since Signal */}

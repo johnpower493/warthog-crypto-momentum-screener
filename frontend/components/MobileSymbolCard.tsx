@@ -36,6 +36,17 @@ interface Metric {
   market_cap?: number | null;
   momentum_score?: number | null;
   sector_tags?: string[] | null;
+  // Volatility Due / Squeeze (multi-timeframe)
+  vol_due_15m?: boolean | null;
+  vol_due_4h?: boolean | null;
+  vol_due_source_tf?: string | null;
+  vol_due_reason?: string | null;
+  vol_due_age_ms?: number | null;
+  // Squeeze (state)
+  vol_squeeze_15m?: boolean | null;
+  vol_squeeze_4h?: boolean | null;
+  bb_width_4h?: number | null;
+  bb_position_4h?: number | null;
   ts: number;
 }
 

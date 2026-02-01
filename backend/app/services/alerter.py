@@ -5,7 +5,7 @@ from typing import List, Dict
 import httpx
 
 from ..models import SymbolMetrics
-from ..config import ENABLE_ALERTS, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, DISCORD_WEBHOOK_URL, ALERT_DEDUP_MIN_MS, ALERT_COOLDOWN_PER_SYMBOL_MS, ALERT_INCLUDE_EXPLANATION, ALERT_MIN_GRADE
+from ..config import ENABLE_ALERTS, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, DISCORD_WEBHOOK_URL, ALERT_DEDUP_MIN_MS, ALERT_COOLDOWN_PER_SYMBOL_MS, ALERT_INCLUDE_EXPLANATION, ALERT_MIN_GRADE, ALERT_VOL_DUE
 from ..config import os as _os  # sentinel for linter
 
 _last_alert_ts: Dict[str, int] = {}
@@ -62,45 +62,74 @@ async def process_metrics(metrics: List[SymbolMetrics]):
     min_rank = grade_rank.get(ALERT_MIN_GRADE, 3)
 
     for m in metrics:
-        # Only send outbound notifications for A-grade by default
-        g = (m.model_dump().get('setup_grade') if hasattr(m, 'model_dump') else None)  # type: ignore
-        if g is None:
-            g = getattr(m, 'setup_grade', None)
-        g = (str(g).upper() if g else None)
-        if g is None:
-            # if grade not present, be conservative: do not notify
-            continue
-        if grade_rank.get(g, 0) < min_rank:
+        sym = f"{m.exchange}:{m.symbol}"
+
+        is_cipher = (m.cipher_buy is True or m.cipher_sell is True)
+        is_wrte = (m.percent_r_ob_reversal is True or m.percent_r_os_reversal is True)
+        is_vol_due = ALERT_VOL_DUE and (getattr(m, 'vol_due_15m', None) is True or getattr(m, 'vol_due_4h', None) is True)
+
+        if not (is_cipher or is_wrte or is_vol_due):
             continue
 
-        # cooldown selection based on liquidity cohort
-        sym = f"{m.exchange}:{m.symbol}"
+        # Cipher/%R alerts are typically filtered by grade; volatility-due is allowed even if grade is absent.
+        if is_cipher or is_wrte:
+            g = (m.model_dump().get('setup_grade') if hasattr(m, 'model_dump') else None)  # type: ignore
+            if g is None:
+                g = getattr(m, 'setup_grade', None)
+            g = (str(g).upper() if g else None)
+            if g is None:
+                # if grade not present, be conservative: do not notify cipher/%R
+                is_cipher = False
+                is_wrte = False
+            elif grade_rank.get(g, 0) < min_rank:
+                is_cipher = False
+                is_wrte = False
+
+        if not (is_cipher or is_wrte or is_vol_due):
+            continue
+
+        # cooldown selection based on liquidity cohort (shared across alert types)
         last = _last_symbol_alert_ts.get(sym, 0)
         cooldown = ALERT_COOLDOWN_TOP_MS if (m.liquidity_top200 is True) else ALERT_COOLDOWN_SMALL_MS
         if now_ms - last < cooldown:
             continue
-        # global de-dup key
-        sym_key = f"{sym}:cooldown"
-        if not _should_alert(sym_key, now_ms):
-            continue
-        # Alert only when a fresh signal is True
-        # Cipher B signals
-        if m.cipher_buy is True or m.cipher_sell is True:
-            _last_symbol_alert_ts[sym] = now_ms
-            side = "BUY" if m.cipher_buy else "SELL"
-            reason = f"\n{m.cipher_reason}" if ALERT_INCLUDE_EXPLANATION and m.cipher_reason else ""
-            tf = f"[{m.cipher_source_tf}]" if m.cipher_source_tf else ""
-            text = f"{side} {tf} {m.exchange} {m.symbol} @ {m.last_price}{reason}"
-            tasks.append(send_telegram(text))
-            tasks.append(send_discord(text))
+
+        # Per-symbol, per-type de-dup keys (prevents different alert types blocking each other)
         
+        # Cipher B signals
+        if is_cipher:
+            sym_key = f"{sym}:cipher"
+            if _should_alert(sym_key, now_ms):
+                _last_symbol_alert_ts[sym] = now_ms
+                side = "BUY" if m.cipher_buy else "SELL"
+                reason = f"\n{m.cipher_reason}" if ALERT_INCLUDE_EXPLANATION and m.cipher_reason else ""
+                tf = f"[{m.cipher_source_tf}]" if m.cipher_source_tf else ""
+                text = f"{side} {tf} {m.exchange} {m.symbol} @ {m.last_price}{reason}"
+                tasks.append(send_telegram(text))
+                tasks.append(send_discord(text))
+
         # %R Trend Exhaustion signals (reversals are most actionable)
-        if m.percent_r_ob_reversal is True or m.percent_r_os_reversal is True:
-            _last_symbol_alert_ts[sym] = now_ms
-            side = "BUY" if m.percent_r_os_reversal else "SELL"
-            reason = f"\n{m.percent_r_reason}" if ALERT_INCLUDE_EXPLANATION and m.percent_r_reason else ""
-            text = f"{side} [%RTE] {m.exchange} {m.symbol} @ {m.last_price}{reason}"
-            tasks.append(send_telegram(text))
-            tasks.append(send_discord(text))
+        if is_wrte:
+            sym_key = f"{sym}:wrte"
+            if _should_alert(sym_key, now_ms):
+                _last_symbol_alert_ts[sym] = now_ms
+                side = "BUY" if m.percent_r_os_reversal else "SELL"
+                reason = f"\n{m.percent_r_reason}" if ALERT_INCLUDE_EXPLANATION and m.percent_r_reason else ""
+                text = f"{side} [%RTE] {m.exchange} {m.symbol} @ {m.last_price}{reason}"
+                tasks.append(send_telegram(text))
+                tasks.append(send_discord(text))
+
+        # Volatility Due (Squeeze) alerts
+        if is_vol_due:
+            sym_key = f"{sym}:vol_due"
+            if _should_alert(sym_key, now_ms):
+                _last_symbol_alert_ts[sym] = now_ms
+                tf = getattr(m, 'vol_due_source_tf', None)
+                tf_txt = f"[{tf}]" if tf else ""
+                reason_txt = getattr(m, 'vol_due_reason', None)
+                reason = f"\n{reason_txt}" if ALERT_INCLUDE_EXPLANATION and reason_txt else ""
+                text = f"VOLATILITY DUE {tf_txt} {m.exchange} {m.symbol} @ {m.last_price}{reason}"
+                tasks.append(send_telegram(text))
+                tasks.append(send_discord(text))
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)

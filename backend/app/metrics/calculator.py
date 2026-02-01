@@ -5,7 +5,13 @@ import math
 import time
 
 from ..models import Kline, SymbolMetrics
-from ..config import WINDOW_SHORT, WINDOW_MEDIUM, ATR_PERIOD, VOL_LOOKBACK, CIPHERB_OS_LEVEL, CIPHERB_OB_LEVEL
+from ..config import (
+    WINDOW_SHORT, WINDOW_MEDIUM, ATR_PERIOD, VOL_LOOKBACK,
+    CIPHERB_OS_LEVEL, CIPHERB_OB_LEVEL,
+    VOL_DUE_BB_WIDTH_15M, VOL_DUE_BB_WIDTH_4H,
+    VOL_DUE_ATR_PCTILE_15M, VOL_DUE_ATR_PCTILE_4H,
+    VOL_DUE_LOOKBACK_15M, VOL_DUE_LOOKBACK_4H,
+)
 
 class RollingSeries:
     def __init__(self, maxlen: int):
@@ -48,6 +54,7 @@ class SymbolState:
         # Signal timestamps for "time since signal"
         self.last_cipher_signal_ts: Optional[int] = None
         self.last_percent_r_signal_ts: Optional[int] = None
+        self.last_vol_due_signal_ts: Optional[int] = None
         
         # Indicator cache to avoid recalculating expensive indicators
         # Cache structure: {indicator_key: (timestamp_ms, cached_value)}
@@ -450,9 +457,14 @@ class SymbolState:
                 multiplier=150,
             )
         
-        # Bollinger Bands (20-period on 15m timeframe)
+        # Bollinger Bands (20-period)
+        # 15m
         bb_upper_val, bb_middle_val, bb_lower_val, bb_width_val, bb_position_val = bollinger_bands(
             list(self._htf['15m']['close'].values), period=20, num_std=2.0
+        )
+        # 4h (we only need width/position for squeeze detection + display)
+        bb_u_4h, bb_m_4h, bb_l_4h, bb_width_4h_val, bb_position_4h_val = bollinger_bands(
+            list(self._htf['4h']['close'].values), period=20, num_std=2.0
         )
         
         # Multi-Timeframe Confluence
@@ -461,19 +473,122 @@ class SymbolState:
             wt_1m_tuple, wt15, wt4h, r15m, r4h
         )
         
-        # Volatility Percentile
+        # Volatility Percentile (1m ATR vs 1m ATR history)
         vol_pct = volatility_percentile(self.atr_history, self.atr, lookback=30) if self.atr else None
-        
+
+        # ===== Volatility Due (Squeeze) on 15m and 4h closed candles =====
+        def _tf_atr(closes_tf: Deque[float], highs_tf: Deque[float], lows_tf: Deque[float], period: int) -> Optional[float]:
+            # compute_atr uses global ATR_PERIOD; implement local Wilder ATR for TF-specific use
+            n = min(len(closes_tf), len(highs_tf), len(lows_tf))
+            if n < period + 1:
+                return None
+            c = list(closes_tf)[-n:]
+            h = list(highs_tf)[-n:]
+            l = list(lows_tf)[-n:]
+            trs: list[float] = []
+            for i in range(1, n):
+                tr = max(h[i] - l[i], abs(h[i] - c[i-1]), abs(l[i] - c[i-1]))
+                trs.append(tr)
+            if len(trs) < period:
+                return None
+            return sum(trs[-period:]) / period
+
+        def _atr_series_tf(closes_tf: Deque[float], highs_tf: Deque[float], lows_tf: Deque[float], period: int, lookback: int) -> list[float]:
+            # Build rolling ATR values for percentile computation.
+            n = min(len(closes_tf), len(highs_tf), len(lows_tf))
+            if n < period + 2:
+                return []
+            c = list(closes_tf)[-n:]
+            h = list(highs_tf)[-n:]
+            l = list(lows_tf)[-n:]
+            atrs: list[float] = []
+            # start at i where we can compute an ATR over previous period TRs
+            for end in range(period + 1, n + 1):
+                # end is exclusive index for c/h/l
+                trs: list[float] = []
+                for i in range(end - period, end):
+                    if i <= 0:
+                        continue
+                    tr = max(h[i] - l[i], abs(h[i] - c[i-1]), abs(l[i] - c[i-1]))
+                    trs.append(tr)
+                if len(trs) == period:
+                    atrs.append(sum(trs) / period)
+            if lookback > 0:
+                atrs = atrs[-lookback:]
+            return atrs
+
+        def _vol_due_for_tf(tf: str, bb_width: Optional[float], bb_width_th: float, atr_pct_th: float, lookback: int) -> tuple[Optional[bool], Optional[float], Optional[float], Optional[bool]]:
+            # returns: (due_now, atr_now, atr_pctile_now, is_compressed_now)
+            closes_tf = self._htf[tf]['close'].values
+            highs_tf = self._htf[tf]['high'].values
+            lows_tf = self._htf[tf]['low'].values
+            atr_now = _tf_atr(closes_tf, highs_tf, lows_tf, ATR_PERIOD)
+            atr_hist = _atr_series_tf(closes_tf, highs_tf, lows_tf, ATR_PERIOD, lookback)
+            atr_pctile = None
+            if atr_now is not None and atr_hist:
+                atr_pctile = volatility_percentile(atr_hist, atr_now, lookback=min(lookback, len(atr_hist)))
+            is_compressed = False
+            if bb_width is not None and bb_width <= bb_width_th:
+                is_compressed = True
+            if atr_pctile is not None and atr_pctile <= atr_pct_th:
+                is_compressed = True
+            # Fresh signal: compressed now AND not compressed on previous candle
+            due_now = None
+            if len(closes_tf) >= 22:
+                prev_bb_width = None
+                if tf == '15m':
+                    # approximate: compute bb width using closes excluding last candle
+                    _, prev_mid, _, prev_width, _ = bollinger_bands(list(closes_tf)[:-1], period=20, num_std=2.0)
+                    prev_bb_width = prev_width
+                else:
+                    _, prev_mid, _, prev_width, _ = bollinger_bands(list(closes_tf)[:-1], period=20, num_std=2.0)
+                    prev_bb_width = prev_width
+                prev_compressed = False
+                if prev_bb_width is not None and prev_bb_width <= bb_width_th:
+                    prev_compressed = True
+                if atr_pctile is not None and len(atr_hist) >= 2:
+                    prev_atr = atr_hist[-2]
+                    prev_pct = volatility_percentile(atr_hist[:-1], prev_atr, lookback=min(lookback, len(atr_hist) - 1))
+                    if prev_pct is not None and prev_pct <= atr_pct_th:
+                        prev_compressed = True
+                # Only fire on transition into compression
+                due_now = True if (is_compressed and not prev_compressed) else False
+            return due_now, atr_now, atr_pctile, is_compressed
+
+        vol_due_15m, atr15, atr15_pct, comp15 = _vol_due_for_tf(
+            '15m', bb_width_val, VOL_DUE_BB_WIDTH_15M, VOL_DUE_ATR_PCTILE_15M, VOL_DUE_LOOKBACK_15M
+        )
+        vol_due_4h, atr4h, atr4h_pct, comp4h = _vol_due_for_tf(
+            '4h', bb_width_4h_val, VOL_DUE_BB_WIDTH_4H, VOL_DUE_ATR_PCTILE_4H, VOL_DUE_LOOKBACK_4H
+        )
+
+        # Squeeze state booleans (stay true while compressed)
+        vol_squeeze_15m = True if comp15 else False
+        vol_squeeze_4h = True if comp4h else False
+
+        vol_due_source_tf = None
+        vol_due_reason = None
+        if vol_due_15m is True or vol_due_4h is True:
+            tf = '15m' if vol_due_15m is True else '4h'
+            vol_due_source_tf = tf
+            if tf == '15m':
+                vol_due_reason = f"Volatility Due: {tf} squeeze (bb_width={bb_width_val:.4f}<= {VOL_DUE_BB_WIDTH_15M}, atr_pctile={atr15_pct})"
+            else:
+                vol_due_reason = f"Volatility Due: {tf} squeeze (bb_width={bb_width_4h_val:.4f}<= {VOL_DUE_BB_WIDTH_4H}, atr_pctile={atr4h_pct})"
+
         # Time Since Signal - update timestamps if signal fired
         now_ms = int(time.time() * 1000)
         if cipher_buy is True or cipher_sell is True:
             self.last_cipher_signal_ts = now_ms
         if percent_r_os_reversal is True or percent_r_ob_reversal is True:
             self.last_percent_r_signal_ts = now_ms
-        
+        if vol_due_15m is True or vol_due_4h is True:
+            self.last_vol_due_signal_ts = now_ms
+
         # Calculate age
         cipher_age = (now_ms - self.last_cipher_signal_ts) if self.last_cipher_signal_ts else None
         percent_r_age = (now_ms - self.last_percent_r_signal_ts) if self.last_percent_r_signal_ts else None
+        vol_due_age = (now_ms - self.last_vol_due_signal_ts) if self.last_vol_due_signal_ts else None
         
         # Sector Tags
         tags = get_sector_tags(self.symbol)
@@ -559,11 +674,20 @@ class SymbolState:
             mtf_bear_count=mtf_bear,
             mtf_summary=mtf_summary_str,
             volatility_percentile=vol_pct,
+            vol_due_15m=vol_due_15m,
+            vol_due_4h=vol_due_4h,
+            vol_due_source_tf=vol_due_source_tf,
+            vol_due_reason=vol_due_reason,
+            vol_due_age_ms=vol_due_age,
+            vol_squeeze_15m=vol_squeeze_15m,
+            vol_squeeze_4h=vol_squeeze_4h,
             bb_upper=bb_upper_val,
             bb_middle=bb_middle_val,
             bb_lower=bb_lower_val,
             bb_width=bb_width_val,
             bb_position=bb_position_val,
+            bb_width_4h=bb_width_4h_val,
+            bb_position_4h=bb_position_4h_val,
             cipher_signal_age_ms=cipher_age,
             percent_r_signal_age_ms=percent_r_age,
             sector_tags=tags if tags else None,
