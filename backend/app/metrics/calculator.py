@@ -55,6 +55,8 @@ class SymbolState:
         self.last_cipher_signal_ts: Optional[int] = None
         self.last_percent_r_signal_ts: Optional[int] = None
         self.last_vol_due_signal_ts: Optional[int] = None
+        self.last_swing_long_signal_ts: Optional[int] = None
+        self._prev_swing_long_condition: bool = False
         
         # Indicator cache to avoid recalculating expensive indicators
         # Cache structure: {indicator_key: (timestamp_ms, cached_value)}
@@ -562,6 +564,54 @@ class SymbolState:
             '4h', bb_width_4h_val, VOL_DUE_BB_WIDTH_4H, VOL_DUE_ATR_PCTILE_4H, VOL_DUE_LOOKBACK_4H
         )
 
+        # ===== 4h Swing Long Strategy (Trend continuation pullback) =====
+        # Signal fires only on transition into "entry condition met" to avoid repeated alerts.
+        swing_long_buy = None
+        swing_long_reason = None
+        swing_long_source_tf = None
+        try:
+            closes_4h = list(self._htf['4h']['close'].values)
+            if len(closes_4h) >= 40:
+                rsi_now = ind_4h['rsi']
+                macd_hist_now = ind_4h['macd_histogram']
+                k_now = ind_4h['stoch_k']
+                d_now = ind_4h['stoch_d']
+
+                # Previous values (use closes excluding last candle)
+                rsi_prev = rsi(closes_4h[:-1], period=14) if len(closes_4h) >= 16 else None
+                k_prev, d_prev = stochastic_rsi(closes_4h[:-1], rsi_period=14, stoch_period=14, k_smooth=3, d_smooth=3) if len(closes_4h) >= 36 else (None, None)
+
+                trend_ok = (rsi_now is not None and macd_hist_now is not None and rsi_now >= 55 and macd_hist_now > 0)
+                pullback_ok = (rsi_now is not None and 45 <= rsi_now <= 55)
+                stoch_cross = (
+                    k_prev is not None and d_prev is not None and k_now is not None and d_now is not None and
+                    (k_prev < d_prev) and (k_now >= d_now) and (k_now < 35)
+                )
+                rsi_turn_up = (rsi_prev is not None and rsi_now is not None and rsi_now > rsi_prev)
+
+                cond_now = bool(trend_ok and pullback_ok and (stoch_cross or rsi_turn_up))
+
+                # rising edge only
+                if cond_now and not self._prev_swing_long_condition:
+                    swing_long_buy = True
+                    swing_long_source_tf = '4h'
+                    if stoch_cross:
+                        swing_long_reason = (
+                            f"SWING LONG 4h: trend ok (RSI={rsi_now:.0f}>=55, MACD_hist>0), pullback (RSI in 45..55), "
+                            f"StochRSI cross-up (K {k_prev:.1f}->{k_now:.1f}, D {d_prev:.1f}->{d_now:.1f})"
+                        )
+                    else:
+                        swing_long_reason = (
+                            f"SWING LONG 4h: trend ok (RSI={rsi_now:.0f}>=55, MACD_hist>0), pullback (RSI in 45..55), RSI turned up ({rsi_prev:.0f}->{rsi_now:.0f})"
+                        )
+                    self.last_swing_long_signal_ts = int(time.time() * 1000)
+                else:
+                    swing_long_buy = False
+
+                self._prev_swing_long_condition = cond_now
+        except Exception:
+            pass
+
         # Squeeze state booleans (stay true while compressed)
         vol_squeeze_15m = True if comp15 else False
         vol_squeeze_4h = True if comp4h else False
@@ -681,6 +731,11 @@ class SymbolState:
             vol_due_age_ms=vol_due_age,
             vol_squeeze_15m=vol_squeeze_15m,
             vol_squeeze_4h=vol_squeeze_4h,
+            # Swing strategy
+            swing_long_buy=swing_long_buy,
+            swing_long_source_tf=swing_long_source_tf,
+            swing_long_reason=swing_long_reason,
+            atr_4h=atr4h,
             bb_upper=bb_upper_val,
             bb_middle=bb_middle_val,
             bb_lower=bb_lower_val,

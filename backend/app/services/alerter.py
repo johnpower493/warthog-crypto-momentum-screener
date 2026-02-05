@@ -66,13 +66,14 @@ async def process_metrics(metrics: List[SymbolMetrics]):
 
         is_cipher = (m.cipher_buy is True or m.cipher_sell is True)
         is_wrte = (m.percent_r_ob_reversal is True or m.percent_r_os_reversal is True)
+        is_swing = (getattr(m, 'swing_long_buy', None) is True)
         is_vol_due = ALERT_VOL_DUE and (getattr(m, 'vol_due_15m', None) is True or getattr(m, 'vol_due_4h', None) is True)
 
-        if not (is_cipher or is_wrte or is_vol_due):
+        if not (is_cipher or is_wrte or is_swing or is_vol_due):
             continue
 
-        # Cipher/%R alerts are typically filtered by grade; volatility-due is allowed even if grade is absent.
-        if is_cipher or is_wrte:
+        # Cipher/%R/Swing alerts are typically filtered by grade; volatility-due is allowed even if grade is absent.
+        if is_cipher or is_wrte or is_swing:
             g = (m.model_dump().get('setup_grade') if hasattr(m, 'model_dump') else None)  # type: ignore
             if g is None:
                 g = getattr(m, 'setup_grade', None)
@@ -85,7 +86,7 @@ async def process_metrics(metrics: List[SymbolMetrics]):
                 is_cipher = False
                 is_wrte = False
 
-        if not (is_cipher or is_wrte or is_vol_due):
+        if not (is_cipher or is_wrte or is_swing or is_vol_due):
             continue
 
         # cooldown selection based on liquidity cohort (shared across alert types)
@@ -116,6 +117,18 @@ async def process_metrics(metrics: List[SymbolMetrics]):
                 side = "BUY" if m.percent_r_os_reversal else "SELL"
                 reason = f"\n{m.percent_r_reason}" if ALERT_INCLUDE_EXPLANATION and m.percent_r_reason else ""
                 text = f"{side} [%RTE] {m.exchange} {m.symbol} @ {m.last_price}{reason}"
+                tasks.append(send_telegram(text))
+                tasks.append(send_discord(text))
+
+        # Swing long alerts
+        if is_swing:
+            sym_key = f"{sym}:swing_long"
+            if _should_alert(sym_key, now_ms):
+                _last_symbol_alert_ts[sym] = now_ms
+                reason_txt = getattr(m, 'swing_long_reason', None)
+                tf = getattr(m, 'swing_long_source_tf', None) or '4h'
+                reason = f"\n{reason_txt}" if ALERT_INCLUDE_EXPLANATION and reason_txt else ""
+                text = f"BUY [SWING {tf}] {m.exchange} {m.symbol} @ {m.last_price}{reason}"
                 tasks.append(send_telegram(text))
                 tasks.append(send_discord(text))
 

@@ -37,6 +37,11 @@ def build_trade_plan(
     swing_high_15m: Optional[float],
     swing_low_15m: Optional[float],
 ) -> TradePlan:
+    """Build a trade plan using 15m structure + ATR guardrail.
+
+    Note: this is used for the fast screener signals (CipherB/%R).
+    """
+
     atr_mult = TRADEPLAN_ATR_MULT
     tp_r1, tp_r2, tp_r3 = TRADEPLAN_TP_R_MULTS
 
@@ -96,5 +101,54 @@ def build_trade_plan(
         rr_tp1=rr1,
         rr_tp2=rr2,
         rr_tp3=rr3,
+        plan_json=plan_json,
+    )
+
+
+def build_trade_plan_swing_4h(
+    entry_price: float,
+    atr_4h: Optional[float],
+    swing_low_4h: Optional[float],
+    tp_r_mult: float = 1.25,
+    atr_mult: float = 2.0,
+) -> TradePlan:
+    """4h swing long plan: structure stop at swing low with ATR fallback.
+
+    - Stop uses min(swing_low_4h, entry - atr_mult*atr_4h) for BUY.
+    - Single TP at tp_r_mult R, stored as TP1.
+    """
+    side = 'BUY'
+    atr_sl = (entry_price - atr_mult * atr_4h) if atr_4h is not None else None
+    candidates = [c for c in [swing_low_4h, atr_sl] if c is not None]
+    stop = min(candidates) if candidates else (atr_sl if atr_sl is not None else entry_price)
+
+    risk = abs(entry_price - stop) if entry_price is not None and stop is not None else None
+    tp1 = None
+    if risk and risk > 0:
+        tp1 = entry_price + tp_r_mult * risk
+
+    plan_json = {
+        'version': 'v1_swing_4h_structure_atr',
+        'atr_mult': atr_mult,
+        'tp_r_mult': tp_r_mult,
+        'swing_low_4h': swing_low_4h,
+        'atr_sl': atr_sl,
+    }
+
+    return TradePlan(
+        side=side,
+        entry_type='market',
+        entry_price=entry_price,
+        stop_loss=stop,
+        tp1=tp1,
+        tp2=None,
+        tp3=None,
+        atr=atr_4h,
+        atr_mult=atr_mult,
+        swing_ref=swing_low_4h,
+        risk_per_unit=risk,
+        rr_tp1=tp_r_mult if tp1 is not None else None,
+        rr_tp2=None,
+        rr_tp3=None,
         plan_json=plan_json,
     )

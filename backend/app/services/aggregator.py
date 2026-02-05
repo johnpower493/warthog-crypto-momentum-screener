@@ -144,16 +144,37 @@ class Aggregator:
                 import json
                 from ..config import TRADEPLAN_SWING_LOOKBACK_15M
                 for m in snap.metrics:
-                    if not (m.cipher_buy is True or m.cipher_sell is True):
+                    is_fast_signal = (m.cipher_buy is True or m.cipher_sell is True)
+                    is_swing_signal = (getattr(m, 'swing_long_buy', None) is True)
+                    if not (is_fast_signal or is_swing_signal):
                         continue
-                    side = "BUY" if m.cipher_buy else "SELL"
-                    # get 15m structure from store
-                    rows15 = get_recent(m.exchange, m.symbol, '15m', limit=TRADEPLAN_SWING_LOOKBACK_15M)
-                    highs = [float(r[3]) for r in rows15] if rows15 else []
-                    lows = [float(r[4]) for r in rows15] if rows15 else []
-                    swing_high = max(highs) if highs else None
-                    swing_low = min(lows) if lows else None
-                    plan = build_trade_plan(side=side, entry_price=float(m.last_price), atr=m.atr, swing_high_15m=swing_high, swing_low_15m=swing_low)
+
+                    if is_swing_signal:
+                        side = 'BUY'
+                        source_tf = getattr(m, 'swing_long_source_tf', None) or '4h'
+                        reason = getattr(m, 'swing_long_reason', None)
+                        from ..config import TRADEPLAN_SWING_LOOKBACK_4H
+                        rows4h = get_recent(m.exchange, m.symbol, '4h', limit=TRADEPLAN_SWING_LOOKBACK_4H)
+                        lows4h = [float(r[4]) for r in rows4h] if rows4h else []
+                        swing_low_4h = min(lows4h) if lows4h else None
+                        from .trade_plan import build_trade_plan_swing_4h
+                        plan = build_trade_plan_swing_4h(
+                            entry_price=float(m.last_price),
+                            atr_4h=getattr(m, 'atr_4h', None),
+                            swing_low_4h=swing_low_4h,
+                        )
+                    else:
+                        side = "BUY" if m.cipher_buy else "SELL"
+                        source_tf = m.cipher_source_tf
+                        reason = m.cipher_reason
+                        # get 15m structure from store
+                        rows15 = get_recent(m.exchange, m.symbol, '15m', limit=TRADEPLAN_SWING_LOOKBACK_15M)
+                        highs = [float(r[3]) for r in rows15] if rows15 else []
+                        lows = [float(r[4]) for r in rows15] if rows15 else []
+                        swing_high = max(highs) if highs else None
+                        swing_low = min(lows) if lows else None
+                        plan = build_trade_plan(side=side, entry_price=float(m.last_price), atr=m.atr, swing_high_15m=swing_high, swing_low_15m=swing_low)
+
                     md = m.model_dump()
                     try:
                         from .grader import grade_alert
@@ -170,9 +191,9 @@ class Aggregator:
                         exchange=m.exchange,
                         symbol=m.symbol,
                         signal=side,
-                        source_tf=m.cipher_source_tf,
+                        source_tf=source_tf,
                         price=float(m.last_price),
-                        reason=m.cipher_reason,
+                        reason=reason,
                         metrics=md,
                         created_ts=int(__import__('time').time() * 1000),
                         setup_score=setup_score,

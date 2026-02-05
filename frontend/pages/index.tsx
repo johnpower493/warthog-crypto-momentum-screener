@@ -141,6 +141,13 @@ type Backtest = {
   avg_bars_to_resolve: number;
 };
 
+// Backtest object returned by backend endpoints (e.g. /symbol/details)
+type BacktestResponse = Backtest & {
+  ts?: number;
+  // Optional larger payload; may be null/empty while summary stats still exist
+  result?: any;
+};
+
 type NewsArticle = {
   id: string;
   title: string;
@@ -203,8 +210,8 @@ export default function Home() {
     oi?: number[];
     loading?: boolean;
     plan?: TradePlan | null;
-    bt30?: any;
-    bt90?: any;
+    bt30?: BacktestResponse | null;
+    bt90?: BacktestResponse | null;
     news?: NewsArticle[];
     newsLoading?: boolean;
     fundingRate?: number | null;
@@ -827,6 +834,12 @@ export default function Home() {
 
   const favRows = useMemo(() => rows.filter(r => favs.includes(idOf(r))), [rows, favs]);
 
+  const toBacktestResponse = (bt: any, windowDays: 30 | 90): BacktestResponse | null => {
+    if (!bt || typeof bt !== 'object') return null;
+    // Normalize/override window_days just in case
+    return { window_days: windowDays, ...bt } as BacktestResponse;
+  };
+
   const openDetails = async (r: Metric) => {
     const exchange = r.exchange || 'binance';
     const backendBase =
@@ -848,8 +861,10 @@ export default function Home() {
           closes: data.closes || [],
           oi: data.oi || [],
           plan: data.plan || null,
-          bt30: data.bt30 && data.bt30.result ? ({ window_days: 30, ...data.bt30 } as any) : null,
-          bt90: data.bt90 && data.bt90.result ? ({ window_days: 90, ...data.bt90 } as any) : null,
+          // bt30/bt90 should render even if `result` is null/empty; UI uses the summary fields.
+          // The backend returns bt30/bt90 as an object with summary stats plus an optional `result` payload.
+          bt30: toBacktestResponse(data.bt30, 30),
+          bt90: toBacktestResponse(data.bt90, 90),
           news: data.news || [],
           newsLoading: false,
           loading: false,
@@ -2131,8 +2146,8 @@ function DetailsModal({
   oi: number[];
   loading: boolean;
   plan: TradePlan | null;
-  bt30: any;
-  bt90: any;
+  bt30: BacktestResponse | null;
+  bt90: BacktestResponse | null;
   news: NewsArticle[];
   newsLoading: boolean;
   fundingRate?: number | null;

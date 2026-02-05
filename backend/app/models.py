@@ -161,6 +161,14 @@ class SymbolMetrics(BaseModel):
     # Sector Tags
     sector_tags: Optional[List[str]] = None  # ["L1", "DeFi", "Top 20"]
     
+    # Swing strategy (4h) - long-only pullback
+    swing_long_buy: Optional[bool] = None
+    swing_long_source_tf: Optional[str] = None  # '4h'
+    swing_long_reason: Optional[str] = None
+
+    # ATR on 4h timeframe (useful for swing stops)
+    atr_4h: Optional[float] = None
+
     # Funding Rate (Perpetual Futures)
     funding_rate: Optional[float] = None  # Current funding rate (e.g., 0.0001 = 0.01%)
     funding_rate_annual: Optional[float] = None  # Annualized funding rate (%)
