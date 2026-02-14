@@ -39,6 +39,10 @@ class Aggregator:
         self._snapshot_cache_ts: int = 0
         self._snapshot_cache_ttl_ms: int = 5000  # 5 seconds
 
+        # Persist snapshot cache to SQLite periodically (for instant warm start)
+        self._last_persist_ts: int = 0
+        self._persist_interval_ms: int = 30_000
+
     async def ingest(self, k: Kline):
         state = self._states.get(k.symbol)
         if state is None:
@@ -244,6 +248,14 @@ class Aggregator:
                         pass
         # publish to redis channel
         await publish_json("screener:snapshot", payload)
+
+        # Persist snapshot cache (best-effort) for fast startup
+        try:
+            if (now_ms - self._last_persist_ts) >= self._persist_interval_ms:
+                self.persist_snapshot_cache()
+                self._last_persist_ts = now_ms
+        except Exception:
+            pass
 
     def state_count(self) -> int:
         return len(self._states)

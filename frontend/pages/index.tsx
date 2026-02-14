@@ -183,6 +183,7 @@ type SortKey =
 
 export default function Home() {
   const [rows, setRows] = useState<Metric[]>([]);
+  const SNAP_CACHE_KEY = 'lastScreenerSnapshot:v1';
   const [showAlerts, setShowAlerts] = useState<boolean>(false);
   const [alertLog, setAlertLog] = useState<{ts:number; text:string}[]>([]);
   const [pendingSnapshot, setPendingSnapshot] = useState<Snapshot | null>(null);
@@ -400,6 +401,18 @@ export default function Home() {
   useEffect(() => {
     // Resolve URLs + hydrate persisted state from localStorage (client-only)
     setIsClient(true);
+
+    // Load last snapshot from localStorage to render immediately (best-effort)
+    try {
+      const raw = localStorage.getItem(SNAP_CACHE_KEY);
+      if (raw) {
+        const s = JSON.parse(raw) as Snapshot;
+        if (s && Array.isArray((s as any).metrics) && (s as any).metrics.length > 0) {
+          setRows((s as any).metrics);
+          setLastUpdate(Date.now());
+        }
+      }
+    } catch {}
     
     // Mobile detection
     const checkMobile = () => setIsMobile(window.innerWidth <= 768);
@@ -627,6 +640,17 @@ export default function Home() {
               if ((snap as any).type === 'ping') return;
               const s = snap as Snapshot;
               
+              // Persist a recent snapshot for faster reloads (throttle to reduce write churn)
+              try {
+                const now = Date.now();
+                // @ts-ignore
+                if (!(window as any).__lastSnapSave || (now - (window as any).__lastSnapSave) > 5000) {
+                  // @ts-ignore
+                  (window as any).__lastSnapSave = now;
+                  localStorage.setItem(SNAP_CACHE_KEY, JSON.stringify(s));
+                }
+              } catch {}
+
               // Use throttled update instead of immediate setState
               setPendingSnapshot(s);
               
@@ -658,7 +682,9 @@ export default function Home() {
           });
 
           setStatus('disconnected');
+          setIsReconnecting(true);
           failCount += 1;
+          setReconnectAttempt(failCount);
         } catch {
           setStatus('disconnected');
           setIsReconnecting(true);
@@ -667,7 +693,8 @@ export default function Home() {
         }
 
         // If WS repeatedly fails, fall back to HTTP polling.
-        if (failCount >= 3) {
+        // Be a bit more patient; transient proxy/WiFi drops are common.
+        if (failCount >= 5) {
           startHttpPolling();
           return;
         }
